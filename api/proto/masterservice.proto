@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+option go_package = "github.com/core-tools/hsu-master/api/proto";
+
+package proto;
+
+service MasterService {
+  rpc Status(StatusRequest) returns (StatusResponse) {}
+}
+
+message StatusRequest {
+}
+
+message StatusResponse {
+  string status = 1;
+}
