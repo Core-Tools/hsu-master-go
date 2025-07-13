@@ -3,6 +3,7 @@ package control
 import (
 	"fmt"
 	"os"
+	"time"
 
 	sprintfLogging "github.com/core-tools/hsu-core/pkg/logging/sprintf"
 
@@ -67,6 +68,18 @@ func main() {
 		logger.Errorf("Failed to create Master: %v", err)
 		os.Exit(1)
 	}
+
+	master.AddWorker(domain.NewIntegratedWorker("test-01", &domain.IntegratedUnit{
+		Metadata: domain.UnitMetadata{
+			Name: "test",
+		},
+		Control: domain.ManagedProcessControl{
+			ExecutablePath: "/test",
+		},
+		HealthCheckRunOptions: domain.HealthCheckRunOptions{
+			Timeout: 10 * time.Second,
+		},
+	}))
 
 	master.Run()
 }
