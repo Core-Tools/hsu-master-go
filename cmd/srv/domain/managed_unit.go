@@ -8,8 +8,8 @@ type ManagedUnit struct {
 	// Always use process PID file discovery
 
 	// Process control
-	Control ManagedProcessControl
+	Control ManagedProcessControlConfig
 
 	// Health monitoring
-	HealthCheck GenericHealthCheckConfig
+	HealthCheck HealthCheckConfig
 }

@@ -8,7 +8,7 @@ type IntegratedUnit struct {
 	// Always use process PID file discovery
 
 	// Process control
-	Control ManagedProcessControl
+	Control ManagedProcessControlConfig
 
 	// Health monitoring
 	HealthCheckRunOptions HealthCheckRunOptions

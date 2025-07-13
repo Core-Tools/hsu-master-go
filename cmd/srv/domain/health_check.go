@@ -22,6 +22,7 @@ type HTTPHealthCheckConfig struct {
 }
 
 type GRPCHealthCheckConfig struct {
+	Address string
 	Service string
 	Method  string
 	Headers map[string]string
@@ -37,7 +38,7 @@ type ExecHealthCheckConfig struct {
 	Args    []string
 }
 
-type GenericHealthCheckConfig struct {
+type HealthCheckConfig struct {
 	Type HealthCheckType
 
 	// HTTP health check
@@ -67,42 +68,6 @@ type HealthCheckRunOptions struct {
 	FailureThreshold int
 }
 
-type HealthCheck struct {
-	monitors map[string]*healthMonitor
-	mutex    sync.Mutex
-}
-
-func NewHealthCheck() *HealthCheck {
-	return &HealthCheck{
-		monitors: make(map[string]*healthMonitor),
-	}
-}
-
-func (h *HealthCheck) AddMonitor(id string, config GenericHealthCheckConfig) {
-	h.mutex.Lock()
-	defer h.mutex.Unlock()
-
-	h.monitors[id] = newHealthMonitor(id, config)
-}
-
-func (h *HealthCheck) Start() {
-	h.mutex.Lock()
-	defer h.mutex.Unlock()
-
-	for _, monitor := range h.monitors {
-		go monitor.start()
-	}
-}
-
-func (h *HealthCheck) Stop() {
-	h.mutex.Lock()
-	defer h.mutex.Unlock()
-
-	for _, monitor := range h.monitors {
-		monitor.stop()
-	}
-}
-
 type HealthCheckStatus string
 
 const (
@@ -120,67 +85,78 @@ type HealthCheckState struct {
 	Retries     int
 }
 
+type HealthMonitor interface {
+	State() *HealthCheckState
+	Start()
+	Stop()
+}
+
 type healthMonitor struct {
-	id       string
-	config   GenericHealthCheckConfig
-	state    HealthCheckState
+	config   *HealthCheckConfig
+	state    *HealthCheckState
 	stopChan chan struct{}
+	wg       sync.WaitGroup
 	mutex    sync.Mutex
 }
 
-func newHealthMonitor(id string, config GenericHealthCheckConfig) *healthMonitor {
+func NewHealthMonitor(config *HealthCheckConfig) HealthMonitor {
 	return &healthMonitor{
-		id:       id,
-		config:   config,
-		state:    HealthCheckState{Status: HealthCheckStatusUnknown},
-		stopChan: make(chan struct{}),
+		config: config,
+		state:  &HealthCheckState{Status: HealthCheckStatusUnknown},
 	}
 }
 
-func (m *healthMonitor) start() {
-	ticker := time.NewTicker(m.config.RunOptions.Interval)
+func (h *healthMonitor) State() *HealthCheckState {
+	return h.state
+}
+
+func (h *healthMonitor) Start() {
+	go h.loop()
+}
+
+func (h *healthMonitor) Stop() {
+	close(h.stopChan)
+}
+
+func (h *healthMonitor) loop() {
+	ticker := time.NewTicker(h.config.RunOptions.Interval)
 
 	for {
 		select {
 		case <-ticker.C:
-			m.check()
-		case <-m.stopChan:
+			h.check()
+		case <-h.stopChan:
 			ticker.Stop()
-			return
 		}
 	}
 }
 
-func (m *healthMonitor) stop() {
-	close(m.stopChan)
-}
-
-func (m *healthMonitor) check() {
-	switch m.config.Type {
+func (h *healthMonitor) check() {
+	switch h.config.Type {
 	case HealthCheckTypeHTTP:
-		m.checkHTTP()
+		h.checkHTTP()
 	case HealthCheckTypeGRPC:
-		m.checkGRPC()
+		h.checkGRPC()
 	case HealthCheckTypeTCP:
-		m.checkTCP()
+		h.checkTCP()
 	case HealthCheckTypeExec:
-		m.checkExec()
+		h.checkExec()
 	case HealthCheckTypeProcess:
-		m.checkProcess()
+		h.checkProcess()
 	}
 }
 
-func (m *healthMonitor) checkHTTP() {
+func (h *healthMonitor) checkHTTP() {
 }
 
-func (m *healthMonitor) checkGRPC() {
+func (h *healthMonitor) checkGRPC() {
 }
 
-func (m *healthMonitor) checkTCP() {
+func (h *healthMonitor) checkTCP() {
 }
 
-func (m *healthMonitor) checkExec() {
+func (h *healthMonitor) checkExec() {
 }
 
-func (m *healthMonitor) checkProcess() {
+func (h *healthMonitor) checkProcess() {
 }

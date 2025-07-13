@@ -3,32 +3,28 @@ package domain
 import (
 	"context"
 	"fmt"
-	"sync"
-	"time"
+	"io"
+	"net"
+	"os/exec"
 
-	coreControl "github.com/core-tools/hsu-core/pkg/control"
-	coreDomain "github.com/core-tools/hsu-core/pkg/domain"
-	coreLogging "github.com/core-tools/hsu-core/pkg/logging"
-	coreProcess "github.com/core-tools/hsu-core/pkg/process"
+	"github.com/core-tools/hsu-core/pkg/logging"
 )
 
 type integratedWorker struct {
 	id                    string
 	metadata              UnitMetadata
+	processControlConfig  ManagedProcessControlConfig
 	healthCheckRunOptions HealthCheckRunOptions
-	processControl        *integratedProcessControl
+	logger                logging.Logger
 }
 
-func NewIntegratedWorker(id string, unit *IntegratedUnit, logger coreLogging.Logger) Worker {
+func NewIntegratedWorker(id string, unit *IntegratedUnit, logger logging.Logger) Worker {
 	return &integratedWorker{
 		id:                    id,
 		metadata:              unit.Metadata,
+		processControlConfig:  unit.Control,
 		healthCheckRunOptions: unit.HealthCheckRunOptions,
-		processControl: &integratedProcessControl{
-			id:     id,
-			config: &unit.Control,
-			logger: logger,
-		},
+		logger:                logger,
 	}
 }
 
@@ -40,31 +36,71 @@ func (w *integratedWorker) Metadata() UnitMetadata {
 	return w.metadata
 }
 
-func (w *integratedWorker) ProcessControl() GenericProcessControl {
-	return w.processControl
+func (w *integratedWorker) ProcessControlOptions() ProcessControlOptions {
+	return ProcessControlOptions{
+		CanAttach:    true,
+		CanTerminate: true,
+		CanRestart:   true,
+		Discovery: DiscoveryConfig{
+			Method:  DiscoveryMethodPIDFile,
+			PIDFile: "",
+		},
+		ExecuteCmd:      w.ExecuteCmd,
+		Restart:         &w.processControlConfig.Restart,
+		Limits:          &w.processControlConfig.Limits,
+		GracefulTimeout: w.processControlConfig.GracefulTimeout,
+		HealthCheck:     nil, // returned by ExecuteCmd
+	}
 }
 
-func (w *integratedWorker) HealthCheckConfig() GenericHealthCheckConfig {
-	return GenericHealthCheckConfig{
+func (w *integratedWorker) ExecuteCmd(ctx context.Context) (*exec.Cmd, io.ReadCloser, *HealthCheckConfig, error) {
+	execution := w.processControlConfig.Execution
+
+	port, err := getFreePort()
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	portStr := fmt.Sprintf("%d", port)
+
+	execution.Args = append(execution.Args, "--port", portStr)
+
+	stdCmd := NewStdExecuteCmd(execution, w.logger)
+	cmd, stdout, err := stdCmd(ctx)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	healthCheckConfig := &HealthCheckConfig{
 		Type: HealthCheckTypeGRPC,
 		GRPC: GRPCHealthCheckConfig{
-			Service: w.id,
+			Address: "localhost:" + portStr,
+			Service: "CoreService",
 			Method:  "Ping",
 		},
 		RunOptions: w.healthCheckRunOptions,
 	}
+
+	return cmd, stdout, healthCheckConfig, nil
 }
 
-func (w *integratedWorker) DiscoveryConfig() GenericDiscoveryConfig {
-	return GenericDiscoveryConfig{
-		Method:  DiscoveryMethodPIDFile,
-		PIDFile: "",
+func getFreePort() (int, error) {
+	addr, err := net.ResolveTCPAddr("tcp", "localhost:0")
+	if err != nil {
+		return 0, err
 	}
+
+	l, err := net.ListenTCP("tcp", addr)
+	if err != nil {
+		return 0, err
+	}
+	defer l.Close()
+	return l.Addr().(*net.TCPAddr).Port, nil
 }
 
+/*
 type integratedProcessControl struct {
 	id         string
-	config     *ManagedProcessControl
+	config     *ManagedProcessControlConfig
 	mutex      sync.Mutex
 	port       int
 	controller coreProcess.Controller
@@ -158,3 +194,4 @@ func (pc *integratedProcessControl) Stop() error {
 func (pc *integratedProcessControl) Restart() error {
 	return fmt.Errorf("not implemented")
 }
+*/

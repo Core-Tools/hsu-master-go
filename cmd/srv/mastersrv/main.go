@@ -1,4 +1,4 @@
-package control
+package main
 
 import (
 	"fmt"
@@ -69,17 +69,22 @@ func main() {
 		os.Exit(1)
 	}
 
-	master.AddWorker(domain.NewIntegratedWorker("test-01", &domain.IntegratedUnit{
+	unit := &domain.IntegratedUnit{
 		Metadata: domain.UnitMetadata{
 			Name: "test",
 		},
-		Control: domain.ManagedProcessControl{
-			ExecutablePath: "/test",
+		Control: domain.ManagedProcessControlConfig{
+			Execution: domain.ExecutionConfig{
+				ExecutablePath: "cmd",
+				WaitDelay:      10 * time.Second,
+			},
 		},
 		HealthCheckRunOptions: domain.HealthCheckRunOptions{
 			Timeout: 10 * time.Second,
 		},
-	}))
+	}
+	worker := domain.NewIntegratedWorker("test-01", unit, masterLogger)
+	master.AddWorker(worker, false)
 
 	master.Run()
 }

@@ -5,11 +5,11 @@ type UnmanagedUnit struct {
 	Metadata UnitMetadata
 
 	// Discovery
-	Discovery GenericDiscoveryConfig
+	Discovery DiscoveryConfig
 
 	// Process control
-	Control SystemProcessControl
+	Control SystemProcessControlConfig
 
 	// Health monitoring
-	HealthCheck GenericHealthCheckConfig
+	HealthCheck HealthCheckConfig
 }
