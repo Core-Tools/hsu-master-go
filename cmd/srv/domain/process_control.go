@@ -123,9 +123,9 @@ type ProcessControl interface {
 	Process() (*os.Process, *os.ProcessState)
 	HealthMonitor() HealthMonitor
 	Stdout() io.ReadCloser
-	Start() error
-	Stop() error
-	Restart() error
+	Start(ctx context.Context) error
+	Stop(ctx context.Context) error
+	Restart(ctx context.Context) error
 }
 
 type ExecuteCmd func(ctx context.Context) (*exec.Cmd, io.ReadCloser, *HealthCheckConfig, error)
@@ -184,7 +184,12 @@ func (pc *processControl) Stdout() io.ReadCloser {
 	return pc.stdout
 }
 
-func (pc *processControl) Start() error {
+func (pc *processControl) Start(ctx context.Context) error {
+	// Validate context
+	if ctx == nil {
+		return NewValidationError("context cannot be nil", nil)
+	}
+
 	pc.logger.Infof("Starting process control, config: %+v", pc.config)
 
 	var process *os.Process
@@ -202,6 +207,8 @@ func (pc *processControl) Start() error {
 		if err == nil {
 			pc.logger.Infof("Attached to process, pid: %d", process.Pid)
 			executeCmd = nil // attached successfully, no need to execute cmd
+		} else {
+			pc.logger.Warnf("Failed to attach to process: %v", err)
 		}
 	}
 
@@ -209,13 +216,27 @@ func (pc *processControl) Start() error {
 		pc.logger.Infof("Running ExecuteCmd...")
 
 		var cmd *exec.Cmd
-		cmd, stdout, healthCheckConfig, err = pc.config.ExecuteCmd(context.Background())
+		cmd, stdout, healthCheckConfig, err = pc.config.ExecuteCmd(ctx)
 		if err != nil {
-			return fmt.Errorf("failed to start process: %v", err)
+			return NewProcessError("failed to start process", err)
 		}
 
 		process, state = cmd.Process, cmd.ProcessState
 		pc.logger.Infof("Executed command, pid: %d", process.Pid)
+	}
+
+	// Check if context was cancelled during startup
+	if ctx.Err() != nil {
+		pc.logger.Infof("Context cancelled during startup, cleaning up...")
+		if process != nil {
+			process.Kill()
+		}
+		return NewCancelledError("startup cancelled", ctx.Err())
+	}
+
+	// Validate that we have a process
+	if process == nil {
+		return NewInternalError("no process available after startup", nil)
 	}
 
 	pc.logger.Infof("Process control started, process: %+v, state: %+v, stdout: %+v", process, state, stdout)
@@ -236,11 +257,16 @@ func (pc *processControl) Start() error {
 	return nil
 }
 
-func (pc *processControl) Stop() error {
+func (pc *processControl) Stop(ctx context.Context) error {
+	// Validate context
+	if ctx == nil {
+		return NewValidationError("context cannot be nil", nil)
+	}
+
 	pc.logger.Infof("Stopping process control...")
 
 	if pc.process == nil {
-		return fmt.Errorf("process not attached")
+		return NewProcessError("process not attached", nil)
 	}
 
 	// 1. Stop health monitor first
@@ -259,10 +285,10 @@ func (pc *processControl) Stop() error {
 		pc.stdout = nil
 	}
 
-	// 3. Terminate the process gracefully
-	if err := pc.terminateProcess(); err != nil {
+	// 3. Terminate the process gracefully with context
+	if err := pc.terminateProcess(ctx); err != nil {
 		pc.logger.Errorf("Failed to terminate process: %v", err)
-		return fmt.Errorf("failed to terminate process: %v", err)
+		return NewProcessError("failed to terminate process", err)
 	}
 
 	// 4. Clean up process references
@@ -273,7 +299,7 @@ func (pc *processControl) Stop() error {
 	return nil
 }
 
-func (pc *processControl) Restart() error {
+func (pc *processControl) Restart(ctx context.Context) error {
 	pc.logger.Infof("Restarting process control...")
 
 	// Store the original config for restart
@@ -282,13 +308,13 @@ func (pc *processControl) Restart() error {
 	}
 
 	// 1. Stop the current process
-	if err := pc.Stop(); err != nil {
+	if err := pc.Stop(ctx); err != nil {
 		pc.logger.Errorf("Failed to stop process during restart: %v", err)
 		return fmt.Errorf("failed to stop process during restart: %v", err)
 	}
 
 	// 2. Start the process again
-	if err := pc.Start(); err != nil {
+	if err := pc.Start(ctx); err != nil {
 		pc.logger.Errorf("Failed to start process during restart: %v", err)
 		return fmt.Errorf("failed to start process during restart: %v", err)
 	}
@@ -297,10 +323,10 @@ func (pc *processControl) Restart() error {
 	return nil
 }
 
-// terminateProcess handles graceful process termination with timeout
-func (pc *processControl) terminateProcess() error {
+// terminateProcess handles graceful process termination with timeout and context cancellation
+func (pc *processControl) terminateProcess(ctx context.Context) error {
 	if pc.process == nil {
-		return fmt.Errorf("no process to terminate")
+		return NewProcessError("no process to terminate", nil)
 	}
 
 	pid := pc.process.Pid
@@ -319,7 +345,7 @@ func (pc *processControl) terminateProcess() error {
 	go func() {
 		state, err := pc.process.Wait()
 		if err != nil {
-			done <- fmt.Errorf("process wait failed: %v", err)
+			done <- NewProcessError("process wait failed", err).WithContext("pid", pid)
 		} else {
 			pc.logger.Infof("Process PID %d exited with status: %v", pid, state)
 			done <- nil
@@ -332,59 +358,67 @@ func (pc *processControl) terminateProcess() error {
 		pc.logger.Warnf("Failed to send termination signal: %v", err)
 	}
 
-	// Wait for graceful shutdown or timeout
+	// Wait for graceful shutdown, timeout, or context cancellation
 	select {
 	case err := <-done:
 		if err != nil {
-			return fmt.Errorf("process termination failed: %v", err)
+			return NewProcessError("process termination failed", err).WithContext("pid", pid)
 		}
 		pc.logger.Infof("Process PID %d terminated gracefully", pid)
 		return nil
 	case <-time.After(gracefulTimeout):
 		pc.logger.Warnf("Process PID %d did not terminate within %v, forcing termination", pid, gracefulTimeout)
+	case <-ctx.Done():
+		pc.logger.Warnf("Context cancelled during graceful termination of PID %d, forcing termination", pid)
 	}
 
 	// Force termination if graceful didn't work
 	if err := pc.forceTermination(); err != nil {
-		return fmt.Errorf("force termination failed: %v", err)
+		return NewProcessError("force termination failed", err).WithContext("pid", pid)
 	}
 
-	// Wait for forced termination (with shorter timeout)
+	// Wait for forced termination (with shorter timeout) or context cancellation
 	select {
 	case err := <-done:
 		if err != nil {
-			return fmt.Errorf("forced termination failed: %v", err)
+			return NewProcessError("forced termination failed", err).WithContext("pid", pid)
 		}
 		pc.logger.Infof("Process PID %d force terminated", pid)
 		return nil
 	case <-time.After(5 * time.Second):
-		return fmt.Errorf("process PID %d did not terminate even after force termination", pid)
+		return NewTimeoutError("process did not terminate even after force termination", nil).WithContext("pid", pid)
+	case <-ctx.Done():
+		pc.logger.Warnf("Context cancelled during force termination of PID %d", pid)
+		return NewCancelledError("termination cancelled", ctx.Err()).WithContext("pid", pid)
 	}
 }
 
 // sendTerminationSignal sends a graceful termination signal to the process
 func (pc *processControl) sendTerminationSignal() error {
 	if pc.process == nil {
-		return fmt.Errorf("no process to signal")
+		return NewProcessError("no process to signal", nil)
 	}
 
 	// Use the platform-specific termination signal
 	// On Unix: SIGTERM to process group
 	// On Windows: Ctrl-Break event
-	return pc.sendGracefulSignal()
+	if err := pc.sendGracefulSignal(); err != nil {
+		return NewProcessError("failed to send graceful signal", err).WithContext("pid", pc.process.Pid)
+	}
+	return nil
 }
 
 // forceTermination forcefully terminates the process
 func (pc *processControl) forceTermination() error {
 	if pc.process == nil {
-		return fmt.Errorf("no process to kill")
+		return NewProcessError("no process to kill", nil)
 	}
 
 	pc.logger.Warnf("Force killing process PID %d", pc.process.Pid)
 
 	// Use Kill() which sends SIGKILL on Unix and TerminateProcess on Windows
 	if err := pc.process.Kill(); err != nil {
-		return fmt.Errorf("failed to kill process: %v", err)
+		return NewProcessError("failed to kill process", err).WithContext("pid", pc.process.Pid)
 	}
 
 	return nil

@@ -2,7 +2,6 @@ package domain
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -188,19 +187,29 @@ type StdExecuteCmd func(ctx context.Context) (*exec.Cmd, io.ReadCloser, error)
 
 func NewStdExecuteCmd(execution ExecutionConfig, logger logging.Logger) StdExecuteCmd {
 	return func(ctx context.Context) (*exec.Cmd, io.ReadCloser, error) {
+		// Validate context
+		if ctx == nil {
+			return nil, nil, NewValidationError("context cannot be nil", nil)
+		}
+
+		// Validate execution config
+		if err := ValidateExecutionConfig(execution); err != nil {
+			return nil, nil, NewValidationError("invalid execution configuration", err)
+		}
+
 		logger.Infof("Executing process, execution config: %+v", execution)
 
 		// Make sure the process is executable
 		err := os.Chmod(execution.ExecutablePath, 0700)
 		if err != nil {
-			return nil, nil, fmt.Errorf("failed to make process executable: %v", err)
+			return nil, nil, NewPermissionError("failed to make process executable", err).WithContext("executable_path", execution.ExecutablePath)
 		}
 
 		workDir := execution.WorkingDirectory
 		if workDir == "" {
 			absPath, err := filepath.Abs(execution.ExecutablePath)
 			if err != nil {
-				return nil, nil, fmt.Errorf("failed to get absolute path: %v", err)
+				return nil, nil, NewIOError("failed to get absolute path", err).WithContext("executable_path", execution.ExecutablePath)
 			}
 			workDir = filepath.Dir(absPath)
 		}
@@ -225,7 +234,7 @@ func NewStdExecuteCmd(execution ExecutionConfig, logger logging.Logger) StdExecu
 
 		stdout, err := cmd.StdoutPipe()
 		if err != nil {
-			return nil, nil, fmt.Errorf("exec.CommandContext failed: %v", err)
+			return nil, nil, NewProcessError("failed to create stdout pipe", err).WithContext("executable_path", execution.ExecutablePath)
 		}
 		cmd.Stderr = cmd.Stdout
 
@@ -233,7 +242,7 @@ func NewStdExecuteCmd(execution ExecutionConfig, logger logging.Logger) StdExecu
 
 		err = cmd.Start()
 		if err != nil {
-			return nil, nil, fmt.Errorf("failed to start the app: %v", err)
+			return nil, nil, NewProcessError("failed to start the app", err).WithContext("executable_path", execution.ExecutablePath)
 		}
 
 		return cmd, stdout, nil

@@ -54,13 +54,18 @@ func (w *integratedWorker) ProcessControlOptions() ProcessControlOptions {
 }
 
 func (w *integratedWorker) ExecuteCmd(ctx context.Context) (*exec.Cmd, io.ReadCloser, *HealthCheckConfig, error) {
+	// Validate context
+	if ctx == nil {
+		return nil, nil, nil, NewValidationError("context cannot be nil", nil)
+	}
+
 	w.logger.Infof("Executing command, config: %+v", w.processControlConfig)
 
 	execution := w.processControlConfig.Execution
 
 	port, err := getFreePort()
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, NewNetworkError("failed to get free port", err)
 	}
 	portStr := fmt.Sprintf("%d", port)
 
@@ -71,7 +76,7 @@ func (w *integratedWorker) ExecuteCmd(ctx context.Context) (*exec.Cmd, io.ReadCl
 	stdCmd := NewStdExecuteCmd(execution, w.logger)
 	cmd, stdout, err := stdCmd(ctx)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, NewProcessError("failed to execute command", err).WithContext("port", port)
 	}
 
 	healthCheckConfig := &HealthCheckConfig{
@@ -90,12 +95,12 @@ func (w *integratedWorker) ExecuteCmd(ctx context.Context) (*exec.Cmd, io.ReadCl
 func getFreePort() (int, error) {
 	addr, err := net.ResolveTCPAddr("tcp", "localhost:0")
 	if err != nil {
-		return 0, err
+		return 0, NewNetworkError("failed to resolve TCP address", err)
 	}
 
 	l, err := net.ListenTCP("tcp", addr)
 	if err != nil {
-		return 0, err
+		return 0, NewNetworkError("failed to listen on TCP address", err)
 	}
 	defer l.Close()
 	return l.Addr().(*net.TCPAddr).Port, nil

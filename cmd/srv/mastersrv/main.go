@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"time"
@@ -94,12 +95,14 @@ func main() {
 		os.Exit(1)
 	}
 
+	ctx := context.Background()
+
 	// Start worker (lifecycle management)
-	err = master.StartWorker("test-01")
+	err = master.StartWorker(ctx, "test-01")
 	if err != nil {
 		logger.Errorf("Failed to start worker: %v", err)
 		os.Exit(1)
 	}
 
-	master.Run()
+	master.Run(ctx)
 }

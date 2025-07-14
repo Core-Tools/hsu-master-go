@@ -4,12 +4,16 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 )
 
 func OpenProcess(config DiscoveryConfig) (*os.Process, *os.ProcessState, io.ReadCloser, *HealthCheckConfig, error) {
+	// Validate discovery configuration
+	if err := ValidateDiscoveryConfig(config); err != nil {
+		return nil, nil, nil, nil, NewValidationError("invalid discovery configuration", err)
+	}
+
 	var process *os.Process
 	var err error
 
@@ -24,11 +28,11 @@ func OpenProcess(config DiscoveryConfig) (*os.Process, *os.ProcessState, io.Read
 	case DiscoveryMethodServiceName:
 		process, err = openProcessByServiceName(config.ServiceName)
 	default:
-		return nil, nil, nil, nil, fmt.Errorf("unsupported discovery method: %s", config.Method)
+		return nil, nil, nil, nil, NewValidationError("unsupported discovery method: "+string(config.Method), nil)
 	}
 
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("failed to discover process: %v", err)
+		return nil, nil, nil, nil, NewDiscoveryError("failed to discover process", err).WithContext("discovery_method", string(config.Method))
 	}
 
 	// Create common health check configuration for attached processes
@@ -51,40 +55,37 @@ func OpenProcess(config DiscoveryConfig) (*os.Process, *os.ProcessState, io.Read
 
 // openProcessByPIDFile discovers a process by reading its PID from a file
 func openProcessByPIDFile(pidFile string) (*os.Process, error) {
-	if pidFile == "" {
-		return nil, fmt.Errorf("PID file path is required")
+	// Validate PID file path
+	if err := ValidatePIDFile(pidFile); err != nil {
+		return nil, err
 	}
 
 	// Read PID from file
 	pidBytes, err := os.ReadFile(pidFile)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read PID file %s: %v", pidFile, err)
+		return nil, NewIOError("failed to read PID file", err).WithContext("pid_file", pidFile)
 	}
 
 	// Parse PID (trim whitespace/newlines)
 	pidStr := strings.TrimSpace(string(pidBytes))
 	if pidStr == "" {
-		return nil, fmt.Errorf("PID file %s is empty", pidFile)
+		return nil, NewValidationError("PID file is empty", nil).WithContext("pid_file", pidFile)
 	}
 
-	pid, err := strconv.Atoi(pidStr)
+	pid, err := ValidatePID(pidStr)
 	if err != nil {
-		return nil, fmt.Errorf("invalid PID in file %s: %v", pidFile, err)
-	}
-
-	if pid <= 0 {
-		return nil, fmt.Errorf("invalid PID %d in file %s", pid, pidFile)
+		return nil, NewValidationError("invalid PID in file", err).WithContext("pid_file", pidFile).WithContext("pid_content", pidStr)
 	}
 
 	// Find the process
 	process, err := os.FindProcess(pid)
 	if err != nil {
-		return nil, fmt.Errorf("failed to find process with PID %d: %v", pid, err)
+		return nil, NewProcessError("failed to find process", err).WithContext("pid", pid).WithContext("pid_file", pidFile)
 	}
 
 	// Verify the process is actually running
 	if err := verifyProcessRunning(process); err != nil {
-		return nil, fmt.Errorf("process PID %d is not running: %v", pid, err)
+		return nil, NewProcessError("process is not running", err).WithContext("pid", pid).WithContext("pid_file", pidFile)
 	}
 
 	return process, nil

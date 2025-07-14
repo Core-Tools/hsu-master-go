@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"context"
 	"fmt"
 	"sync"
 
@@ -53,7 +54,22 @@ func NewMaster(options MasterOptions, coreLogger coreLogging.Logger, masterLogge
 }
 
 func (m *Master) AddWorker(worker Worker) error {
+	if worker == nil {
+		return NewValidationError("worker cannot be nil", nil)
+	}
+
 	id := worker.ID()
+
+	// Validate worker ID
+	if err := ValidateWorkerID(id); err != nil {
+		return NewValidationError("invalid worker ID", err).WithContext("worker_id", id)
+	}
+
+	// Validate worker options
+	options := worker.ProcessControlOptions()
+	if err := ValidateProcessControlOptions(options); err != nil {
+		return NewValidationError("invalid worker process control options", err).WithContext("worker_id", id)
+	}
 
 	m.logger.Infof("Adding worker, id: %s", id)
 
@@ -61,7 +77,7 @@ func (m *Master) AddWorker(worker Worker) error {
 	defer m.mutex.Unlock()
 
 	if _, exists := m.controls[id]; exists {
-		return fmt.Errorf("worker already exists")
+		return NewConflictError("worker already exists", nil).WithContext("worker_id", id)
 	}
 
 	logger := masterLogging.NewLogger("worker: "+id+" , ", masterLogging.LogFuncs{
@@ -71,7 +87,7 @@ func (m *Master) AddWorker(worker Worker) error {
 		Errorf: m.logger.Errorf,
 	})
 
-	processControl := NewProcessControl(worker.ProcessControlOptions(), logger)
+	processControl := NewProcessControl(options, logger)
 
 	m.controls[id] = processControl
 
@@ -80,6 +96,11 @@ func (m *Master) AddWorker(worker Worker) error {
 }
 
 func (m *Master) RemoveWorker(id string) error {
+	// Validate worker ID
+	if err := ValidateWorkerID(id); err != nil {
+		return NewValidationError("invalid worker ID", err).WithContext("worker_id", id)
+	}
+
 	m.logger.Infof("Removing worker, id: %s", id)
 
 	m.mutex.Lock()
@@ -87,7 +108,7 @@ func (m *Master) RemoveWorker(id string) error {
 
 	_, exists := m.controls[id]
 	if !exists {
-		return fmt.Errorf("worker not found")
+		return NewNotFoundError("worker not found", nil).WithContext("worker_id", id)
 	}
 
 	delete(m.controls, id)
@@ -96,89 +117,135 @@ func (m *Master) RemoveWorker(id string) error {
 	return nil
 }
 
-func (m *Master) StartWorker(id string) error {
+func (m *Master) StartWorker(ctx context.Context, id string) error {
+	// Validate context
+	if ctx == nil {
+		return NewValidationError("context cannot be nil", nil)
+	}
+
+	// Validate worker ID
+	if err := ValidateWorkerID(id); err != nil {
+		return NewValidationError("invalid worker ID", err).WithContext("worker_id", id)
+	}
+
 	m.logger.Infof("Starting worker, id: %s", id)
 
 	// 1. Get process control under lock
 	processControl, exists := m.getControl(id)
 	if !exists {
-		return fmt.Errorf("worker not found")
+		return NewNotFoundError("worker not found", nil).WithContext("worker_id", id)
 	}
 
 	// 2. Start outside of lock (can be long-running)
-	err := processControl.Start()
+	err := processControl.Start(ctx)
 	if err != nil {
 		m.logger.Errorf("Failed to start worker, id: %s, error: %v", id, err)
-		return fmt.Errorf("failed to start worker: %v", err)
+		// Check if the error is a context cancellation
+		if ctx.Err() != nil {
+			return NewCancelledError("worker start was cancelled", ctx.Err()).WithContext("worker_id", id)
+		}
+		return NewProcessError("failed to start worker", err).WithContext("worker_id", id)
 	}
 
 	m.logger.Infof("Worker started successfully, id: %s", id)
 	return nil
 }
 
-func (m *Master) StopWorker(id string) error {
+func (m *Master) StopWorker(ctx context.Context, id string) error {
+	// Validate context
+	if ctx == nil {
+		return NewValidationError("context cannot be nil", nil)
+	}
+
+	// Validate worker ID
+	if err := ValidateWorkerID(id); err != nil {
+		return NewValidationError("invalid worker ID", err).WithContext("worker_id", id)
+	}
+
 	m.logger.Infof("Stopping worker, id: %s", id)
 
 	// 1. Get process control under lock
 	processControl, exists := m.getControl(id)
 	if !exists {
-		return fmt.Errorf("worker not found")
+		return NewNotFoundError("worker not found", nil).WithContext("worker_id", id)
 	}
 
 	// 2. Stop outside of lock (can be long-running)
-	err := processControl.Stop()
+	err := processControl.Stop(ctx)
 	if err != nil {
 		m.logger.Errorf("Failed to stop worker, id: %s, error: %v", id, err)
-		return fmt.Errorf("failed to stop worker: %v", err)
+		// Check if the error is a context cancellation
+		if ctx.Err() != nil {
+			return NewCancelledError("worker stop was cancelled", ctx.Err()).WithContext("worker_id", id)
+		}
+		return NewProcessError("failed to stop worker", err).WithContext("worker_id", id)
 	}
 
 	m.logger.Infof("Worker stopped successfully, id: %s", id)
 	return nil
 }
 
-func (m *Master) Run() {
+func (m *Master) Run(ctx context.Context) {
 	m.logger.Infof("Starting master...")
 
-	// Start workers
-	m.startProcessControls()
+	// Start workers with provided context
+	m.startProcessControls(ctx)
 
 	// Start the server (blocks until shutdown)
 	m.server.Run(func() {
 		m.logger.Infof("Shutting down workers...")
-		m.stopProcessControls()
+		// Use provided context for shutdown operations
+		// The context allows the caller to control timeouts and cancellation
+		m.stopProcessControls(ctx)
 		m.logger.Infof("Workers shutdown complete.")
 	})
 }
 
-func (m *Master) startProcessControls() {
+func (m *Master) startProcessControls(ctx context.Context) {
 	m.logger.Infof("Starting process controls...")
 
 	// 1. Get all process controls under lock
 	controlsCopy := m.getAllControls()
 
 	// 2. Start processes outside of lock
+	errorCollection := NewErrorCollection()
 	for id, processControl := range controlsCopy {
-		err := processControl.Start()
+		err := processControl.Start(ctx)
 		if err != nil {
 			m.logger.Errorf("Failed to start process control, id: %s, error: %v", id, err)
+			// Add context to the error for better debugging
+			contextualErr := NewProcessError("failed to start process control", err).WithContext("worker_id", id)
+			errorCollection.Add(contextualErr)
 		}
+	}
+
+	if errorCollection.HasErrors() {
+		m.logger.Errorf("Some process controls failed to start: %v", errorCollection.Error())
 	}
 
 	m.logger.Infof("Process controls started.")
 }
 
-func (m *Master) stopProcessControls() {
+func (m *Master) stopProcessControls(ctx context.Context) {
 	m.logger.Infof("Stopping process controls...")
 
 	// 1. Get all process controls under lock
 	controlsCopy := m.getAllControls()
 
 	// 2. Stop processes outside of lock
+	errorCollection := NewErrorCollection()
 	for id, processControl := range controlsCopy {
-		err := processControl.Stop()
+		err := processControl.Stop(ctx)
 		if err != nil {
 			m.logger.Errorf("Failed to stop process control, id: %s, error: %v", id, err)
+			// Add context to the error for better debugging
+			contextualErr := NewProcessError("failed to stop process control", err).WithContext("worker_id", id)
+			errorCollection.Add(contextualErr)
 		}
+	}
+
+	if errorCollection.HasErrors() {
+		m.logger.Errorf("Some process controls failed to stop: %v", errorCollection.Error())
 	}
 
 	m.logger.Infof("Process controls stopped.")
