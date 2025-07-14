@@ -52,7 +52,7 @@ func NewMaster(options MasterOptions, coreLogger coreLogging.Logger, masterLogge
 	return master, nil
 }
 
-func (m *Master) AddWorker(worker Worker, start bool) error {
+func (m *Master) AddWorker(worker Worker) error {
 	id := worker.ID()
 
 	m.logger.Infof("Adding worker, id: %s", id)
@@ -75,72 +75,65 @@ func (m *Master) AddWorker(worker Worker, start bool) error {
 
 	m.controls[id] = processControl
 
-	if start {
-		err := processControl.Start()
-		if err != nil {
-			m.logger.Errorf("Failed to start worker, id: %s, error: %v", id, err)
-		}
-	}
-
+	m.logger.Infof("Worker added successfully, id: %s", id)
 	return nil
 }
 
-func (m *Master) RemoveWorker(id string, stop bool) error {
+func (m *Master) RemoveWorker(id string) error {
 	m.logger.Infof("Removing worker, id: %s", id)
 
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
-	processControl, exists := m.controls[id]
+	_, exists := m.controls[id]
 	if !exists {
 		return fmt.Errorf("worker not found")
 	}
 
-	if stop {
-		err := processControl.Stop()
-		if err != nil {
-			m.logger.Errorf("Failed to stop worker, id: %s, error: %v", id, err)
-		}
-	}
-
 	delete(m.controls, id)
+
+	m.logger.Infof("Worker removed successfully, id: %s", id)
 	return nil
 }
 
 func (m *Master) StartWorker(id string) error {
 	m.logger.Infof("Starting worker, id: %s", id)
 
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
-
-	processControl, exists := m.controls[id]
+	// 1. Get process control under lock
+	processControl, exists := m.getControl(id)
 	if !exists {
 		return fmt.Errorf("worker not found")
 	}
 
+	// 2. Start outside of lock (can be long-running)
 	err := processControl.Start()
 	if err != nil {
 		m.logger.Errorf("Failed to start worker, id: %s, error: %v", id, err)
+		return fmt.Errorf("failed to start worker: %v", err)
 	}
-	return err
+
+	m.logger.Infof("Worker started successfully, id: %s", id)
+	return nil
 }
 
 func (m *Master) StopWorker(id string) error {
 	m.logger.Infof("Stopping worker, id: %s", id)
 
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
-
-	processControl, exists := m.controls[id]
+	// 1. Get process control under lock
+	processControl, exists := m.getControl(id)
 	if !exists {
 		return fmt.Errorf("worker not found")
 	}
 
+	// 2. Stop outside of lock (can be long-running)
 	err := processControl.Stop()
 	if err != nil {
 		m.logger.Errorf("Failed to stop worker, id: %s, error: %v", id, err)
+		return fmt.Errorf("failed to stop worker: %v", err)
 	}
-	return err
+
+	m.logger.Infof("Worker stopped successfully, id: %s", id)
+	return nil
 }
 
 func (m *Master) Run() {
@@ -160,10 +153,11 @@ func (m *Master) Run() {
 func (m *Master) startProcessControls() {
 	m.logger.Infof("Starting process controls...")
 
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
+	// 1. Get all process controls under lock
+	controlsCopy := m.getAllControls()
 
-	for id, processControl := range m.controls {
+	// 2. Start processes outside of lock
+	for id, processControl := range controlsCopy {
 		err := processControl.Start()
 		if err != nil {
 			m.logger.Errorf("Failed to start process control, id: %s, error: %v", id, err)
@@ -176,10 +170,11 @@ func (m *Master) startProcessControls() {
 func (m *Master) stopProcessControls() {
 	m.logger.Infof("Stopping process controls...")
 
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
+	// 1. Get all process controls under lock
+	controlsCopy := m.getAllControls()
 
-	for id, processControl := range m.controls {
+	// 2. Stop processes outside of lock
+	for id, processControl := range controlsCopy {
 		err := processControl.Stop()
 		if err != nil {
 			m.logger.Errorf("Failed to stop process control, id: %s, error: %v", id, err)
@@ -187,4 +182,25 @@ func (m *Master) stopProcessControls() {
 	}
 
 	m.logger.Infof("Process controls stopped.")
+}
+
+// getControl returns a single process control under lock
+func (m *Master) getControl(id string) (ProcessControl, bool) {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+
+	processControl, exists := m.controls[id]
+	return processControl, exists
+}
+
+// getAllControls returns a copy of all process controls under lock
+func (m *Master) getAllControls() map[string]ProcessControl {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+
+	controlsCopy := make(map[string]ProcessControl)
+	for id, processControl := range m.controls {
+		controlsCopy[id] = processControl
+	}
+	return controlsCopy
 }

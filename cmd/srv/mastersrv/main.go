@@ -86,7 +86,20 @@ func main() {
 		},
 	}
 	worker := domain.NewIntegratedWorker("test-01", unit, masterLogger)
-	master.AddWorker(worker, false)
+
+	// Add worker (registration only)
+	err = master.AddWorker(worker)
+	if err != nil {
+		logger.Errorf("Failed to add worker: %v", err)
+		os.Exit(1)
+	}
+
+	// Start worker (lifecycle management)
+	err = master.StartWorker("test-01")
+	if err != nil {
+		logger.Errorf("Failed to start worker: %v", err)
+		os.Exit(1)
+	}
 
 	master.Run()
 }

@@ -119,10 +119,6 @@ type DiscoveryConfig struct {
 	CheckInterval time.Duration
 }
 
-func OpenProcess(config DiscoveryConfig) (*os.Process, *os.ProcessState, io.ReadCloser, *HealthCheckConfig, error) {
-	return nil, nil, nil, nil, fmt.Errorf("not implemented")
-}
-
 type ProcessControl interface {
 	Process() (*os.Process, *os.ProcessState)
 	HealthMonitor() HealthMonitor
@@ -247,15 +243,149 @@ func (pc *processControl) Stop() error {
 		return fmt.Errorf("process not attached")
 	}
 
-	return fmt.Errorf("not implemented")
+	// 1. Stop health monitor first
+	if pc.healthMonitor != nil {
+		pc.logger.Infof("Stopping health monitor...")
+		pc.healthMonitor.Stop()
+		pc.healthMonitor = nil
+	}
+
+	// 2. Close stdout reader to prevent resource leaks
+	if pc.stdout != nil {
+		pc.logger.Infof("Closing stdout reader...")
+		if err := pc.stdout.Close(); err != nil {
+			pc.logger.Warnf("Failed to close stdout: %v", err)
+		}
+		pc.stdout = nil
+	}
+
+	// 3. Terminate the process gracefully
+	if err := pc.terminateProcess(); err != nil {
+		pc.logger.Errorf("Failed to terminate process: %v", err)
+		return fmt.Errorf("failed to terminate process: %v", err)
+	}
+
+	// 4. Clean up process references
+	pc.process = nil
+	pc.state = nil
+
+	pc.logger.Infof("Process control stopped successfully")
+	return nil
 }
 
 func (pc *processControl) Restart() error {
 	pc.logger.Infof("Restarting process control...")
 
+	// Store the original config for restart
 	if pc.process == nil {
 		return fmt.Errorf("process not attached")
 	}
 
-	return fmt.Errorf("not implemented")
+	// 1. Stop the current process
+	if err := pc.Stop(); err != nil {
+		pc.logger.Errorf("Failed to stop process during restart: %v", err)
+		return fmt.Errorf("failed to stop process during restart: %v", err)
+	}
+
+	// 2. Start the process again
+	if err := pc.Start(); err != nil {
+		pc.logger.Errorf("Failed to start process during restart: %v", err)
+		return fmt.Errorf("failed to start process during restart: %v", err)
+	}
+
+	pc.logger.Infof("Process control restarted successfully")
+	return nil
+}
+
+// terminateProcess handles graceful process termination with timeout
+func (pc *processControl) terminateProcess() error {
+	if pc.process == nil {
+		return fmt.Errorf("no process to terminate")
+	}
+
+	pid := pc.process.Pid
+	pc.logger.Infof("Terminating process PID %d", pid)
+
+	// Determine graceful timeout
+	gracefulTimeout := pc.config.GracefulTimeout
+	if gracefulTimeout <= 0 {
+		gracefulTimeout = 30 * time.Second // Default timeout
+	}
+
+	// Create a channel to signal when process exits
+	done := make(chan error, 1)
+
+	// Start a goroutine to wait for process exit
+	go func() {
+		state, err := pc.process.Wait()
+		if err != nil {
+			done <- fmt.Errorf("process wait failed: %v", err)
+		} else {
+			pc.logger.Infof("Process PID %d exited with status: %v", pid, state)
+			done <- nil
+		}
+	}()
+
+	// Try graceful termination first
+	pc.logger.Infof("Sending termination signal to process PID %d", pid)
+	if err := pc.sendTerminationSignal(); err != nil {
+		pc.logger.Warnf("Failed to send termination signal: %v", err)
+	}
+
+	// Wait for graceful shutdown or timeout
+	select {
+	case err := <-done:
+		if err != nil {
+			return fmt.Errorf("process termination failed: %v", err)
+		}
+		pc.logger.Infof("Process PID %d terminated gracefully", pid)
+		return nil
+	case <-time.After(gracefulTimeout):
+		pc.logger.Warnf("Process PID %d did not terminate within %v, forcing termination", pid, gracefulTimeout)
+	}
+
+	// Force termination if graceful didn't work
+	if err := pc.forceTermination(); err != nil {
+		return fmt.Errorf("force termination failed: %v", err)
+	}
+
+	// Wait for forced termination (with shorter timeout)
+	select {
+	case err := <-done:
+		if err != nil {
+			return fmt.Errorf("forced termination failed: %v", err)
+		}
+		pc.logger.Infof("Process PID %d force terminated", pid)
+		return nil
+	case <-time.After(5 * time.Second):
+		return fmt.Errorf("process PID %d did not terminate even after force termination", pid)
+	}
+}
+
+// sendTerminationSignal sends a graceful termination signal to the process
+func (pc *processControl) sendTerminationSignal() error {
+	if pc.process == nil {
+		return fmt.Errorf("no process to signal")
+	}
+
+	// Use the platform-specific termination signal
+	// On Unix: SIGTERM to process group
+	// On Windows: Ctrl-Break event
+	return pc.sendGracefulSignal()
+}
+
+// forceTermination forcefully terminates the process
+func (pc *processControl) forceTermination() error {
+	if pc.process == nil {
+		return fmt.Errorf("no process to kill")
+	}
+
+	pc.logger.Warnf("Force killing process PID %d", pc.process.Pid)
+
+	// Use Kill() which sends SIGKILL on Unix and TerminateProcess on Windows
+	if err := pc.process.Kill(); err != nil {
+		return fmt.Errorf("failed to kill process: %v", err)
+	}
+
+	return nil
 }

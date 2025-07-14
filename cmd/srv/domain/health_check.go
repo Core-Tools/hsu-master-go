@@ -101,8 +101,9 @@ type healthMonitor struct {
 
 func NewHealthMonitor(config *HealthCheckConfig) HealthMonitor {
 	return &healthMonitor{
-		config: config,
-		state:  &HealthCheckState{Status: HealthCheckStatusUnknown},
+		config:   config,
+		state:    &HealthCheckState{Status: HealthCheckStatusUnknown},
+		stopChan: make(chan struct{}),
 	}
 }
 
