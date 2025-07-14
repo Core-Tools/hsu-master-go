@@ -1,0 +1,1 @@
+mastersrv.exe --port 50055 --process "..\\..\\..\\..\\hsu-example1-go\\cmd\\srv\\echogrpcsrv\\echogrpcsrv.exe"

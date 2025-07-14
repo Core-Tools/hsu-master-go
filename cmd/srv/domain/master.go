@@ -55,6 +55,8 @@ func NewMaster(options MasterOptions, coreLogger coreLogging.Logger, masterLogge
 func (m *Master) AddWorker(worker Worker, start bool) error {
 	id := worker.ID()
 
+	m.logger.Infof("Adding worker, id: %s", id)
+
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
@@ -74,13 +76,18 @@ func (m *Master) AddWorker(worker Worker, start bool) error {
 	m.controls[id] = processControl
 
 	if start {
-		processControl.Start()
+		err := processControl.Start()
+		if err != nil {
+			m.logger.Errorf("Failed to start worker, id: %s, error: %v", id, err)
+		}
 	}
 
 	return nil
 }
 
 func (m *Master) RemoveWorker(id string, stop bool) error {
+	m.logger.Infof("Removing worker, id: %s", id)
+
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
@@ -90,7 +97,10 @@ func (m *Master) RemoveWorker(id string, stop bool) error {
 	}
 
 	if stop {
-		processControl.Stop()
+		err := processControl.Stop()
+		if err != nil {
+			m.logger.Errorf("Failed to stop worker, id: %s, error: %v", id, err)
+		}
 	}
 
 	delete(m.controls, id)
@@ -98,6 +108,8 @@ func (m *Master) RemoveWorker(id string, stop bool) error {
 }
 
 func (m *Master) StartWorker(id string) error {
+	m.logger.Infof("Starting worker, id: %s", id)
+
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
@@ -106,10 +118,16 @@ func (m *Master) StartWorker(id string) error {
 		return fmt.Errorf("worker not found")
 	}
 
-	return processControl.Start()
+	err := processControl.Start()
+	if err != nil {
+		m.logger.Errorf("Failed to start worker, id: %s, error: %v", id, err)
+	}
+	return err
 }
 
 func (m *Master) StopWorker(id string) error {
+	m.logger.Infof("Stopping worker, id: %s", id)
+
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
@@ -118,7 +136,11 @@ func (m *Master) StopWorker(id string) error {
 		return fmt.Errorf("worker not found")
 	}
 
-	return processControl.Stop()
+	err := processControl.Stop()
+	if err != nil {
+		m.logger.Errorf("Failed to stop worker, id: %s, error: %v", id, err)
+	}
+	return err
 }
 
 func (m *Master) Run() {
@@ -136,19 +158,33 @@ func (m *Master) Run() {
 }
 
 func (m *Master) startProcessControls() {
+	m.logger.Infof("Starting process controls...")
+
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
-	for _, processControl := range m.controls {
-		processControl.Start()
+	for id, processControl := range m.controls {
+		err := processControl.Start()
+		if err != nil {
+			m.logger.Errorf("Failed to start process control, id: %s, error: %v", id, err)
+		}
 	}
+
+	m.logger.Infof("Process controls started.")
 }
 
 func (m *Master) stopProcessControls() {
+	m.logger.Infof("Stopping process controls...")
+
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
-	for _, processControl := range m.controls {
-		processControl.Stop()
+	for id, processControl := range m.controls {
+		err := processControl.Stop()
+		if err != nil {
+			m.logger.Errorf("Failed to stop process control, id: %s, error: %v", id, err)
+		}
 	}
+
+	m.logger.Infof("Process controls stopped.")
 }

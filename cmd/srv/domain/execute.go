@@ -188,6 +188,8 @@ type StdExecuteCmd func(ctx context.Context) (*exec.Cmd, io.ReadCloser, error)
 
 func NewStdExecuteCmd(execution ExecutionConfig, logger logging.Logger) StdExecuteCmd {
 	return func(ctx context.Context) (*exec.Cmd, io.ReadCloser, error) {
+		logger.Infof("Executing process, execution config: %+v", execution)
+
 		// Make sure the process is executable
 		err := os.Chmod(execution.ExecutablePath, 0700)
 		if err != nil {
@@ -226,6 +228,8 @@ func NewStdExecuteCmd(execution ExecutionConfig, logger logging.Logger) StdExecu
 			return nil, nil, fmt.Errorf("exec.CommandContext failed: %v", err)
 		}
 		cmd.Stderr = cmd.Stdout
+
+		logger.Infof("Starting process, cmd: %+v", cmd)
 
 		err = cmd.Start()
 		if err != nil {

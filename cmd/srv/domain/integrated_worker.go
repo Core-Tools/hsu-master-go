@@ -54,6 +54,8 @@ func (w *integratedWorker) ProcessControlOptions() ProcessControlOptions {
 }
 
 func (w *integratedWorker) ExecuteCmd(ctx context.Context) (*exec.Cmd, io.ReadCloser, *HealthCheckConfig, error) {
+	w.logger.Infof("Executing command, config: %+v", w.processControlConfig)
+
 	execution := w.processControlConfig.Execution
 
 	port, err := getFreePort()
@@ -61,6 +63,8 @@ func (w *integratedWorker) ExecuteCmd(ctx context.Context) (*exec.Cmd, io.ReadCl
 		return nil, nil, nil, err
 	}
 	portStr := fmt.Sprintf("%d", port)
+
+	w.logger.Infof("Got free port, port: %d", port)
 
 	execution.Args = append(execution.Args, "--port", portStr)
 

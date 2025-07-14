@@ -15,7 +15,8 @@ import (
 )
 
 type flagOptions struct {
-	Port int `long:"port" description:"port to listen on"`
+	Port    int    `long:"port" description:"port to listen on"`
+	Process string `long:"process" description:"process to start"`
 }
 
 func logPrefix(module string) string {
@@ -75,12 +76,13 @@ func main() {
 		},
 		Control: domain.ManagedProcessControlConfig{
 			Execution: domain.ExecutionConfig{
-				ExecutablePath: "cmd",
+				ExecutablePath: opts.Process,
 				WaitDelay:      10 * time.Second,
 			},
 		},
 		HealthCheckRunOptions: domain.HealthCheckRunOptions{
-			Timeout: 10 * time.Second,
+			Interval: 10 * time.Second,
+			Timeout:  10 * time.Second,
 		},
 	}
 	worker := domain.NewIntegratedWorker("test-01", unit, masterLogger)
