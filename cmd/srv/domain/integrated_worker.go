@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"os/exec"
 
 	"github.com/core-tools/hsu-master/pkg/logging"
@@ -16,15 +17,15 @@ type integratedWorker struct {
 	processControlConfig  ManagedProcessControlConfig
 	healthCheckRunOptions HealthCheckRunOptions
 	logger                logging.Logger
-	pidManager            *PIDFileManager
+	pidManager            *ProcessFileManager
 }
 
 func NewIntegratedWorker(id string, unit *IntegratedUnit, logger logging.Logger) Worker {
 	// Get PID file configuration from unit or use default
-	pidConfig := unit.Control.Execution.PIDFileConfig
+	pidConfig := unit.Control.Execution.ProcessFileConfig
 	if pidConfig == nil {
 		// Use default system service configuration
-		defaultConfig := GetRecommendedPIDFileConfig("system", DefaultAppName)
+		defaultConfig := GetRecommendedProcessFileConfig("system", DefaultAppName)
 		pidConfig = &defaultConfig
 	}
 
@@ -34,7 +35,7 @@ func NewIntegratedWorker(id string, unit *IntegratedUnit, logger logging.Logger)
 		processControlConfig:  unit.Control,
 		healthCheckRunOptions: unit.HealthCheckRunOptions,
 		logger:                logger,
-		pidManager:            NewPIDFileManager(*pidConfig),
+		pidManager:            NewProcessFileManager(*pidConfig),
 	}
 }
 
@@ -58,11 +59,46 @@ func (w *integratedWorker) ProcessControlOptions() ProcessControlOptions {
 			PIDFile: pidFile,
 		},
 		ExecuteCmd:      w.ExecuteCmd,
+		AttachCmd:       w.AttachCmd, // Use custom AttachCmd that creates dynamic gRPC health check
 		Restart:         &w.processControlConfig.Restart,
 		Limits:          &w.processControlConfig.Limits,
 		GracefulTimeout: w.processControlConfig.GracefulTimeout,
-		HealthCheck:     nil, // returned by ExecuteCmd
+		HealthCheck:     nil, // Provided by ExecuteCmd or AttachCmd
 	}
+}
+
+// AttachCmd creates a dynamic gRPC health check configuration by reading the port file
+func (w *integratedWorker) AttachCmd(config DiscoveryConfig) (*os.Process, *os.ProcessState, io.ReadCloser, *HealthCheckConfig, error) {
+	// Use standard attachment to discover the process
+	stdAttachCmd := NewStdAttachCmd(nil) // No health check config yet
+	process, state, stdout, _, err := stdAttachCmd(config)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+
+	// Read the port from the port file
+	port, err := w.pidManager.ReadPortFile(w.id)
+	if err != nil {
+		w.logger.Warnf("Failed to read port file for worker %s: %v, using default port 50051", w.id, err)
+		port = 50051 // Default fallback port
+	}
+
+	portStr := fmt.Sprintf("%d", port)
+
+	// Create dynamic gRPC health check configuration
+	healthCheckConfig := &HealthCheckConfig{
+		Type: HealthCheckTypeGRPC,
+		GRPC: GRPCHealthCheckConfig{
+			Address: "localhost:" + portStr,
+			Service: "CoreService",
+			Method:  "Ping",
+		},
+		RunOptions: w.healthCheckRunOptions,
+	}
+
+	w.logger.Infof("Created dynamic gRPC health check for attached process %d: %s", process.Pid, healthCheckConfig.GRPC.Address)
+
+	return process, state, stdout, healthCheckConfig, nil
 }
 
 func (w *integratedWorker) ExecuteCmd(ctx context.Context) (*exec.Cmd, io.ReadCloser, *HealthCheckConfig, error) {
@@ -99,6 +135,15 @@ func (w *integratedWorker) ExecuteCmd(ctx context.Context) (*exec.Cmd, io.ReadCl
 	} else {
 		pidFile := w.pidManager.GeneratePIDFilePath(w.id)
 		w.logger.Infof("PID file written for worker %s: %s (PID: %d)", w.id, pidFile, cmd.Process.Pid)
+	}
+
+	// Write port file
+	if err := w.pidManager.WritePortFile(w.id, port); err != nil {
+		// Log error but don't fail - the process is already running
+		w.logger.Errorf("Failed to write port file for worker %s: %v", w.id, err)
+	} else {
+		portFile := w.pidManager.GeneratePortFilePath(w.id)
+		w.logger.Infof("Port file written for worker %s: %s (port: %d)", w.id, portFile, port)
 	}
 
 	healthCheckConfig := &HealthCheckConfig{

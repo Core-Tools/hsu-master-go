@@ -145,6 +145,9 @@ func TestManagedWorker_ProcessControlOptions(t *testing.T) {
 	// Test ExecuteCmd is present
 	assert.NotNil(t, options.ExecuteCmd, "ManagedWorker should provide ExecuteCmd")
 
+	// Test AttachCmd is present
+	assert.NotNil(t, options.AttachCmd, "ManagedWorker should provide AttachCmd")
+
 	// Test restart configuration
 	require.NotNil(t, options.Restart)
 	assert.Equal(t, RestartOnFailure, options.Restart.Policy)
@@ -162,14 +165,8 @@ func TestManagedWorker_ProcessControlOptions(t *testing.T) {
 	// Test graceful timeout
 	assert.Equal(t, 30*time.Second, options.GracefulTimeout)
 
-	// Test health check
-	require.NotNil(t, options.HealthCheck)
-	assert.Equal(t, HealthCheckTypeProcess, options.HealthCheck.Type)
-	assert.Equal(t, 30*time.Second, options.HealthCheck.RunOptions.Interval)
-	assert.Equal(t, 5*time.Second, options.HealthCheck.RunOptions.Timeout)
-	assert.Equal(t, 3, options.HealthCheck.RunOptions.Retries)
-	assert.Equal(t, 1, options.HealthCheck.RunOptions.SuccessThreshold)
-	assert.Equal(t, 3, options.HealthCheck.RunOptions.FailureThreshold)
+	// Test health check is provided by ExecuteCmd or AttachCmd
+	assert.Nil(t, options.HealthCheck, "ManagedWorker should provide health check via ExecuteCmd or AttachCmd")
 }
 
 func TestManagedWorker_PIDFileGeneration(t *testing.T) {
@@ -250,7 +247,7 @@ func TestManagedWorker_ExecuteCmd_PIDFileWriting(t *testing.T) {
 	// Create a temporary directory for PID files
 	tempDir := t.TempDir()
 
-	pidConfig := PIDFileConfig{
+	pidConfig := ProcessFileConfig{
 		BaseDirectory:   tempDir,
 		ServiceContext:  UserService,
 		AppName:         "test-app",
@@ -280,12 +277,12 @@ func TestManagedWorker_ExecuteCmd_PIDFileWriting(t *testing.T) {
 		},
 		Control: ManagedProcessControlConfig{
 			Execution: ExecutionConfig{
-				ExecutablePath:   executablePath,
-				Args:             args,
-				WorkingDirectory: workingDirectory,
-				Environment:      []string{},
-				PIDFileConfig:    &pidConfig,
-				WaitDelay:        5 * time.Second,
+				ExecutablePath:    executablePath,
+				Args:              args,
+				WorkingDirectory:  workingDirectory,
+				Environment:       []string{},
+				ProcessFileConfig: &pidConfig,
+				WaitDelay:         5 * time.Second,
 			},
 			GracefulTimeout: 30 * time.Second,
 			Restart: RestartConfig{

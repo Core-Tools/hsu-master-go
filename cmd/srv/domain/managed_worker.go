@@ -15,15 +15,15 @@ type managedWorker struct {
 	processControlConfig ManagedProcessControlConfig
 	healthCheckConfig    HealthCheckConfig
 	logger               logging.Logger
-	pidManager           *PIDFileManager
+	pidManager           *ProcessFileManager
 }
 
 func NewManagedWorker(id string, unit *ManagedUnit, logger logging.Logger) Worker {
 	// Get PID file configuration from unit or use default
-	pidConfig := unit.Control.Execution.PIDFileConfig
+	pidConfig := unit.Control.Execution.ProcessFileConfig
 	if pidConfig == nil {
 		// Use default system service configuration
-		defaultConfig := GetRecommendedPIDFileConfig("system", DefaultAppName)
+		defaultConfig := GetRecommendedProcessFileConfig("system", DefaultAppName)
 		pidConfig = &defaultConfig
 	}
 
@@ -33,7 +33,7 @@ func NewManagedWorker(id string, unit *ManagedUnit, logger logging.Logger) Worke
 		processControlConfig: unit.Control,
 		healthCheckConfig:    unit.HealthCheck,
 		logger:               logger,
-		pidManager:           NewPIDFileManager(*pidConfig),
+		pidManager:           NewProcessFileManager(*pidConfig),
 	}
 }
 
@@ -58,10 +58,11 @@ func (w *managedWorker) ProcessControlOptions() ProcessControlOptions {
 			CheckInterval: 30 * time.Second,
 		},
 		ExecuteCmd:      w.ExecuteCmd,
+		AttachCmd:       NewStdAttachCmd(&w.healthCheckConfig), // Use unit's health check config
 		Restart:         &w.processControlConfig.Restart,
 		Limits:          &w.processControlConfig.Limits,
 		GracefulTimeout: w.processControlConfig.GracefulTimeout,
-		HealthCheck:     &w.healthCheckConfig,
+		HealthCheck:     nil, // Provided by ExecuteCmd or AttachCmd
 	}
 }
 

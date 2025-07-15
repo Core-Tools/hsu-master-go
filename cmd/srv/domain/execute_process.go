@@ -221,7 +221,7 @@ type ExecutionConfig struct {
 	WaitDelay        time.Duration
 
 	// PID file configuration (optional)
-	PIDFileConfig *PIDFileConfig
+	ProcessFileConfig *ProcessFileConfig
 }
 
 type StdExecuteCmd func(ctx context.Context) (*exec.Cmd, io.ReadCloser, error)

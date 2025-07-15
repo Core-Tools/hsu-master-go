@@ -141,6 +141,9 @@ func TestIntegratedWorker_ProcessControlOptions(t *testing.T) {
 	// Test ExecuteCmd is present
 	assert.NotNil(t, options.ExecuteCmd, "IntegratedWorker should provide ExecuteCmd")
 
+	// Test AttachCmd is present
+	assert.NotNil(t, options.AttachCmd, "IntegratedWorker should provide AttachCmd")
+
 	// Test restart configuration
 	require.NotNil(t, options.Restart)
 	assert.Equal(t, RestartOnFailure, options.Restart.Policy)
@@ -158,8 +161,8 @@ func TestIntegratedWorker_ProcessControlOptions(t *testing.T) {
 	// Test graceful timeout
 	assert.Equal(t, 30*time.Second, options.GracefulTimeout)
 
-	// Test health check is nil (returned by ExecuteCmd)
-	assert.Nil(t, options.HealthCheck, "IntegratedWorker health check should be nil (provided by ExecuteCmd)")
+	// Test health check is nil (provided by ExecuteCmd or AttachCmd)
+	assert.Nil(t, options.HealthCheck, "IntegratedWorker health check should be nil (provided by ExecuteCmd or AttachCmd)")
 }
 
 func TestIntegratedWorker_ExecuteCmd_NilContext(t *testing.T) {

@@ -67,6 +67,10 @@ func ValidateProcessControlOptions(options ProcessControlOptions) error {
 		return NewValidationError("either CanAttach must be true or ExecuteCmd must be provided", nil)
 	}
 
+	if options.CanAttach && options.AttachCmd == nil {
+		return NewValidationError("AttachCmd must be provided if CanAttach is true", nil)
+	}
+
 	return nil
 }
 

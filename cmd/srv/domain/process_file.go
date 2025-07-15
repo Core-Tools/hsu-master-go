@@ -5,14 +5,15 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 )
 
 // Default application name for HSU Master
 const DefaultAppName = "hsu-master"
 
-// PIDFileConfig holds configuration for PID file generation
-type PIDFileConfig struct {
+// ProcessFileConfig holds configuration for process file generation (PID files, port files, etc.)
+type ProcessFileConfig struct {
 	// Base directory for PID files. If empty, uses OS-appropriate default
 	BaseDirectory string
 
@@ -40,13 +41,13 @@ const (
 	SessionService ServiceContext = "session"
 )
 
-// PIDFileManager provides PID file path generation and management
-type PIDFileManager struct {
-	config PIDFileConfig
+// ProcessFileManager provides process file path generation and management (PID files, port files, etc.)
+type ProcessFileManager struct {
+	config ProcessFileConfig
 }
 
-// NewPIDFileManager creates a new PID file manager with the given configuration
-func NewPIDFileManager(config PIDFileConfig) *PIDFileManager {
+// NewProcessFileManager creates a new process file manager with the given configuration
+func NewProcessFileManager(config ProcessFileConfig) *ProcessFileManager {
 	// Set defaults
 	if config.AppName == "" {
 		config.AppName = DefaultAppName
@@ -56,13 +57,13 @@ func NewPIDFileManager(config PIDFileConfig) *PIDFileManager {
 		config.ServiceContext = SystemService
 	}
 
-	return &PIDFileManager{
+	return &ProcessFileManager{
 		config: config,
 	}
 }
 
 // GeneratePIDFilePath generates an appropriate PID file path for the given worker ID
-func (m *PIDFileManager) GeneratePIDFilePath(workerID string) string {
+func (m *ProcessFileManager) GeneratePIDFilePath(workerID string) string {
 	baseDir := m.getBaseDirectory()
 
 	// Create app subdirectory if requested
@@ -73,8 +74,15 @@ func (m *PIDFileManager) GeneratePIDFilePath(workerID string) string {
 	return filepath.Join(baseDir, workerID+".pid")
 }
 
+// GeneratePortFilePath generates an appropriate port file path for the given worker ID
+func (m *ProcessFileManager) GeneratePortFilePath(workerID string) string {
+	// Use same base directory as PID files but with .port extension
+	pidPath := m.GeneratePIDFilePath(workerID)
+	return strings.TrimSuffix(pidPath, ".pid") + ".port"
+}
+
 // WritePIDFile writes the process PID to the appropriate file for the given worker ID
-func (m *PIDFileManager) WritePIDFile(workerID string, pid int) error {
+func (m *ProcessFileManager) WritePIDFile(workerID string, pid int) error {
 	pidFilePath := m.GeneratePIDFilePath(workerID)
 
 	// Validate directory exists and is writable
@@ -91,8 +99,46 @@ func (m *PIDFileManager) WritePIDFile(workerID string, pid int) error {
 	return nil
 }
 
+// WritePortFile writes a port number to a port file
+func (m *ProcessFileManager) WritePortFile(workerID string, port int) error {
+	portPath := m.GeneratePortFilePath(workerID)
+
+	// Validate directory exists and is writable
+	if err := m.ValidatePIDFileDirectory(portPath); err != nil {
+		return NewIOError("port file directory validation failed", err).WithContext("port_file", portPath)
+	}
+
+	// Write port to file
+	portContent := fmt.Sprintf("%d\n", port)
+	if err := os.WriteFile(portPath, []byte(portContent), 0644); err != nil {
+		return NewIOError("failed to write port file", err).WithContext("port_file", portPath).WithContext("port", port)
+	}
+
+	return nil
+}
+
+// ReadPortFile reads a port number from a port file
+func (m *ProcessFileManager) ReadPortFile(workerID string) (int, error) {
+	portPath := m.GeneratePortFilePath(workerID)
+
+	// Read port file
+	content, err := os.ReadFile(portPath)
+	if err != nil {
+		return 0, NewIOError("failed to read port file", err).WithContext("port_file", portPath)
+	}
+
+	// Parse port number
+	portStr := strings.TrimSpace(string(content))
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return 0, NewValidationError("invalid port in port file", err).WithContext("port_file", portPath).WithContext("content", portStr)
+	}
+
+	return port, nil
+}
+
 // getBaseDirectory returns the appropriate base directory for PID files
-func (m *PIDFileManager) getBaseDirectory() string {
+func (m *ProcessFileManager) getBaseDirectory() string {
 	// Use explicit configuration if provided
 	if m.config.BaseDirectory != "" {
 		return m.config.BaseDirectory
@@ -112,7 +158,7 @@ func (m *PIDFileManager) getBaseDirectory() string {
 }
 
 // getSystemServiceDirectory returns the directory for system services
-func (m *PIDFileManager) getSystemServiceDirectory() string {
+func (m *ProcessFileManager) getSystemServiceDirectory() string {
 	switch runtime.GOOS {
 	case "windows":
 		// Use ProgramData for system services on Windows
@@ -137,7 +183,7 @@ func (m *PIDFileManager) getSystemServiceDirectory() string {
 }
 
 // getUserServiceDirectory returns the directory for user services
-func (m *PIDFileManager) getUserServiceDirectory() string {
+func (m *ProcessFileManager) getUserServiceDirectory() string {
 	switch runtime.GOOS {
 	case "windows":
 		// Use LocalAppData for user services on Windows
@@ -171,7 +217,7 @@ func (m *PIDFileManager) getUserServiceDirectory() string {
 }
 
 // getSessionServiceDirectory returns the directory for session services
-func (m *PIDFileManager) getSessionServiceDirectory() string {
+func (m *ProcessFileManager) getSessionServiceDirectory() string {
 	switch runtime.GOOS {
 	case "windows":
 		// Windows doesn't have a direct equivalent, use temp directory
@@ -197,7 +243,7 @@ func (m *PIDFileManager) getSessionServiceDirectory() string {
 }
 
 // ValidatePIDFileDirectory validates that the PID file directory exists and is writable
-func (m *PIDFileManager) ValidatePIDFileDirectory(pidFilePath string) error {
+func (m *ProcessFileManager) ValidatePIDFileDirectory(pidFilePath string) error {
 	dir := filepath.Dir(pidFilePath)
 
 	// Check if directory exists
@@ -227,36 +273,36 @@ func (m *PIDFileManager) ValidatePIDFileDirectory(pidFilePath string) error {
 	return nil
 }
 
-// GetRecommendedPIDFileConfig returns recommended PID file configuration for different deployment scenarios
-func GetRecommendedPIDFileConfig(scenario string, appName string) PIDFileConfig {
+// GetRecommendedProcessFileConfig returns recommended process file configuration for different deployment scenarios
+func GetRecommendedProcessFileConfig(scenario string, appName string) ProcessFileConfig {
 	if appName == "" {
 		appName = DefaultAppName
 	}
 
 	switch strings.ToLower(scenario) {
 	case "system", "daemon", "service":
-		return PIDFileConfig{
+		return ProcessFileConfig{
 			ServiceContext:  SystemService,
 			AppName:         appName,
 			UseSubdirectory: true,
 		}
 
 	case "user", "personal":
-		return PIDFileConfig{
+		return ProcessFileConfig{
 			ServiceContext:  UserService,
 			AppName:         appName,
 			UseSubdirectory: true,
 		}
 
 	case "session", "desktop":
-		return PIDFileConfig{
+		return ProcessFileConfig{
 			ServiceContext:  SessionService,
 			AppName:         appName,
 			UseSubdirectory: false,
 		}
 
 	case "development", "dev", "test":
-		return PIDFileConfig{
+		return ProcessFileConfig{
 			BaseDirectory:   filepath.Join(os.TempDir(), appName+"-dev"),
 			ServiceContext:  UserService,
 			AppName:         appName,
@@ -265,7 +311,7 @@ func GetRecommendedPIDFileConfig(scenario string, appName string) PIDFileConfig 
 
 	default:
 		// Default to system service
-		return PIDFileConfig{
+		return ProcessFileConfig{
 			ServiceContext:  SystemService,
 			AppName:         appName,
 			UseSubdirectory: true,

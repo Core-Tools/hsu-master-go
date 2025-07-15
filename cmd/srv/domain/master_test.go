@@ -90,6 +90,7 @@ func createTestWorker(id string) *MockWorker {
 			Method:  DiscoveryMethodPIDFile,
 			PIDFile: pidFile,
 		},
+		AttachCmd: NewStdAttachCmd(nil), // Add AttachCmd since CanAttach is true
 	})
 	return worker
 }

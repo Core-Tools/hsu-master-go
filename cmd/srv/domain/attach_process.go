@@ -5,52 +5,46 @@ import (
 	"io"
 	"os"
 	"strings"
-	"time"
 )
 
-func OpenProcess(config DiscoveryConfig) (*os.Process, *os.ProcessState, io.ReadCloser, *HealthCheckConfig, error) {
-	// Validate discovery configuration
-	if err := ValidateDiscoveryConfig(config); err != nil {
-		return nil, nil, nil, nil, NewValidationError("invalid discovery configuration", err)
+// AttachCmd represents a command that attaches to an existing process
+type AttachCmd func(config DiscoveryConfig) (*os.Process, *os.ProcessState, io.ReadCloser, *HealthCheckConfig, error)
+
+// NewStdAttachCmd creates a standard attachment command function
+func NewStdAttachCmd(healthCheckConfig *HealthCheckConfig) AttachCmd {
+	return func(config DiscoveryConfig) (*os.Process, *os.ProcessState, io.ReadCloser, *HealthCheckConfig, error) {
+		// Validate discovery configuration
+		if err := ValidateDiscoveryConfig(config); err != nil {
+			return nil, nil, nil, nil, NewValidationError("invalid discovery configuration", err)
+		}
+
+		var process *os.Process
+		var err error
+
+		// Delegate to specific discovery method
+		switch config.Method {
+		case DiscoveryMethodPIDFile:
+			process, err = openProcessByPIDFile(config.PIDFile)
+		case DiscoveryMethodProcessName:
+			process, err = openProcessByName(config.ProcessName, config.ProcessArgs)
+		case DiscoveryMethodPort:
+			process, err = openProcessByPort(config.Port, config.Protocol)
+		case DiscoveryMethodServiceName:
+			process, err = openProcessByServiceName(config.ServiceName)
+		default:
+			return nil, nil, nil, nil, NewValidationError("unsupported discovery method: "+string(config.Method), nil)
+		}
+
+		if err != nil {
+			return nil, nil, nil, nil, NewDiscoveryError("failed to discover process", err).WithContext("discovery_method", string(config.Method))
+		}
+
+		// For attached processes:
+		// - ProcessState is nil (we haven't waited on the process)
+		// - stdout is nil (we can't access stdout of existing processes)
+		// - HealthCheckConfig comes from the caller (worker-specific)
+		return process, nil, nil, healthCheckConfig, nil
 	}
-
-	var process *os.Process
-	var err error
-
-	// Delegate to specific discovery method
-	switch config.Method {
-	case DiscoveryMethodPIDFile:
-		process, err = openProcessByPIDFile(config.PIDFile)
-	case DiscoveryMethodProcessName:
-		process, err = openProcessByName(config.ProcessName, config.ProcessArgs)
-	case DiscoveryMethodPort:
-		process, err = openProcessByPort(config.Port, config.Protocol)
-	case DiscoveryMethodServiceName:
-		process, err = openProcessByServiceName(config.ServiceName)
-	default:
-		return nil, nil, nil, nil, NewValidationError("unsupported discovery method: "+string(config.Method), nil)
-	}
-
-	if err != nil {
-		return nil, nil, nil, nil, NewDiscoveryError("failed to discover process", err).WithContext("discovery_method", string(config.Method))
-	}
-
-	// Create common health check configuration for attached processes
-	healthCheckConfig := &HealthCheckConfig{
-		Type: HealthCheckTypeProcess,
-		RunOptions: HealthCheckRunOptions{
-			Interval:         30 * time.Second,
-			Timeout:          5 * time.Second,
-			SuccessThreshold: 1,
-			FailureThreshold: 3,
-		},
-	}
-
-	// For attached processes:
-	// - ProcessState is nil (we haven't waited on the process)
-	// - stdout is nil (we can't access stdout of existing processes)
-	// - HealthCheckConfig uses process monitoring
-	return process, nil, nil, healthCheckConfig, nil
 }
 
 // openProcessByPIDFile discovers a process by reading its PID from a file

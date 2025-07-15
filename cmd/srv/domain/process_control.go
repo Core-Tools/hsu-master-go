@@ -145,6 +145,7 @@ type ProcessControlOptions struct {
 	// Process start
 	Discovery  DiscoveryConfig // Discovery config, must be always present
 	ExecuteCmd ExecuteCmd      // Execute command, nil if not executable
+	AttachCmd  AttachCmd       // Attach command, nil if not attachable
 
 	// Process restart
 	Restart *RestartConfig // nil if not restartable
@@ -153,7 +154,7 @@ type ProcessControlOptions struct {
 	Limits *ResourceLimits // nil if not limitable
 
 	// Health check override
-	HealthCheck *HealthCheckConfig // nil if not health checkable or if ExecuteCmd is provided
+	HealthCheck *HealthCheckConfig // nil if not health checkable or if ExecuteCmd/AttachCmd are provided
 }
 
 type processControl struct {
@@ -200,10 +201,12 @@ func (pc *processControl) Start(ctx context.Context) error {
 	healthCheckConfig := pc.config.HealthCheck
 
 	executeCmd := pc.config.ExecuteCmd
-	if pc.config.CanAttach {
+	attachCmd := pc.config.AttachCmd
+
+	if pc.config.CanAttach && attachCmd != nil {
 		pc.logger.Infof("Trying to attach to process...")
 
-		process, state, stdout, healthCheckConfig, err = OpenProcess(pc.config.Discovery)
+		process, state, stdout, healthCheckConfig, err = attachCmd(pc.config.Discovery)
 		if err == nil {
 			pc.logger.Infof("Attached to process, pid: %d", process.Pid)
 			executeCmd = nil // attached successfully, no need to execute cmd
@@ -216,7 +219,7 @@ func (pc *processControl) Start(ctx context.Context) error {
 		pc.logger.Infof("Running ExecuteCmd...")
 
 		var cmd *exec.Cmd
-		cmd, stdout, healthCheckConfig, err = pc.config.ExecuteCmd(ctx)
+		cmd, stdout, healthCheckConfig, err = executeCmd(ctx)
 		if err != nil {
 			return NewProcessError("failed to start process", err)
 		}

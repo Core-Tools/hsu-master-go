@@ -39,10 +39,11 @@ func (w *unmanagedWorker) ProcessControlOptions() ProcessControlOptions {
 		CanRestart:      w.processControlConfig.CanRestart,      // Based on system control config
 		Discovery:       w.discoveryConfig,                      // Use configured discovery method
 		ExecuteCmd:      nil,                                    // Cannot execute new processes
+		AttachCmd:       NewStdAttachCmd(&w.healthCheckConfig),  // Use unit's health check config
 		Restart:         nil,                                    // No restart configuration for unmanaged
 		Limits:          nil,                                    // No resource limits for unmanaged
 		GracefulTimeout: w.processControlConfig.GracefulTimeout, // Use configured graceful timeout
-		HealthCheck:     &w.healthCheckConfig,                   // Use configured health check
+		HealthCheck:     nil,                                    // Provided by AttachCmd
 		AllowedSignals:  w.processControlConfig.AllowedSignals,  // Use configured signal permissions
 	}
 }
