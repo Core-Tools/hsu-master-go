@@ -6,10 +6,48 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"time"
 
 	"github.com/core-tools/hsu-master/pkg/logging"
 )
+
+// ensureExecutable checks if a file is executable and makes it executable if it's not
+func ensureExecutable(path string) error {
+	// Check if file exists
+	info, err := os.Stat(path)
+	if err != nil {
+		return NewIOError("file does not exist", err).WithContext("path", path)
+	}
+
+	// On Windows, files with .exe, .bat, .cmd extensions are inherently executable
+	// Also, system files in Windows system directories are already executable
+	if runtime.GOOS == "windows" {
+		ext := filepath.Ext(path)
+		if ext == ".exe" || ext == ".bat" || ext == ".cmd" {
+			return nil // Already executable
+		}
+		// For Windows system directories, assume files are executable
+		if filepath.Dir(path) == "C:\\Windows\\System32" || filepath.Dir(path) == "C:\\Windows\\System32\\" {
+			return nil // System files are already executable
+		}
+	}
+
+	// Check if file is already executable
+	mode := info.Mode()
+	if mode&0111 != 0 { // Check if any execute bit is set
+		return nil // Already executable
+	}
+
+	// Try to make it executable (only on Unix systems or non-system files)
+	if runtime.GOOS != "windows" {
+		if err := os.Chmod(path, mode|0111); err != nil {
+			return NewPermissionError("failed to make file executable", err).WithContext("path", path)
+		}
+	}
+
+	return nil
+}
 
 /*
 	type Controller interface {
@@ -202,10 +240,9 @@ func NewStdExecuteCmd(execution ExecutionConfig, logger logging.Logger) StdExecu
 
 		logger.Infof("Executing process, execution config: %+v", execution)
 
-		// Make sure the process is executable
-		err := os.Chmod(execution.ExecutablePath, 0700)
-		if err != nil {
-			return nil, nil, NewPermissionError("failed to make process executable", err).WithContext("executable_path", execution.ExecutablePath)
+		// Check if the process is executable, and make it executable if it's not
+		if err := ensureExecutable(execution.ExecutablePath); err != nil {
+			return nil, nil, NewPermissionError("failed to ensure process is executable", err).WithContext("executable_path", execution.ExecutablePath)
 		}
 
 		workDir := execution.WorkingDirectory

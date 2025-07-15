@@ -349,3 +349,91 @@ func TestPIDFileManager_WorkerIDValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestPIDFileManager_WritePIDFile(t *testing.T) {
+	// Create a temporary directory for testing
+	tempDir := t.TempDir()
+
+	config := PIDFileConfig{
+		BaseDirectory:   tempDir,
+		ServiceContext:  UserService,
+		AppName:         "test-app",
+		UseSubdirectory: false,
+	}
+
+	manager := NewPIDFileManager(config)
+
+	// Test writing PID file
+	workerID := "test-worker"
+	pid := 12345
+
+	err := manager.WritePIDFile(workerID, pid)
+	assert.NoError(t, err)
+
+	// Verify file was created with correct content
+	pidFilePath := manager.GeneratePIDFilePath(workerID)
+	assert.FileExists(t, pidFilePath)
+
+	content, err := os.ReadFile(pidFilePath)
+	assert.NoError(t, err)
+	assert.Equal(t, "12345\n", string(content))
+}
+
+func TestPIDFileManager_WritePIDFile_InvalidDirectory(t *testing.T) {
+	// Use a path that cannot be created on any platform
+	var invalidPath string
+	if runtime.GOOS == "windows" {
+		// Use a path with invalid characters on Windows
+		invalidPath = "C:\\invalid\\path\\with\\null\\char\x00\\that\\cannot\\be\\created"
+	} else {
+		// Use a path under /dev/null which is a file, not a directory
+		invalidPath = "/dev/null/invalid/path/that/cannot/be/created"
+	}
+
+	config := PIDFileConfig{
+		BaseDirectory:   invalidPath,
+		ServiceContext:  UserService,
+		AppName:         "test-app",
+		UseSubdirectory: false,
+	}
+
+	manager := NewPIDFileManager(config)
+
+	// Test writing PID file to invalid directory
+	workerID := "test-worker"
+	pid := 12345
+
+	err := manager.WritePIDFile(workerID, pid)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "PID file directory validation failed")
+}
+
+func TestPIDFileManager_WritePIDFile_WithSubdirectory(t *testing.T) {
+	// Create a temporary directory for testing
+	tempDir := t.TempDir()
+
+	config := PIDFileConfig{
+		BaseDirectory:   tempDir,
+		ServiceContext:  UserService,
+		AppName:         "test-app",
+		UseSubdirectory: true,
+	}
+
+	manager := NewPIDFileManager(config)
+
+	// Test writing PID file with subdirectory
+	workerID := "test-worker"
+	pid := 54321
+
+	err := manager.WritePIDFile(workerID, pid)
+	assert.NoError(t, err)
+
+	// Verify file was created in subdirectory with correct content
+	pidFilePath := manager.GeneratePIDFilePath(workerID)
+	assert.FileExists(t, pidFilePath)
+	assert.Contains(t, pidFilePath, "test-app") // Should contain subdirectory
+
+	content, err := os.ReadFile(pidFilePath)
+	assert.NoError(t, err)
+	assert.Equal(t, "54321\n", string(content))
+}

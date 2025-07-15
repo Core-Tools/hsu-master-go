@@ -39,6 +39,21 @@ func (m *MockIntegratedLogger) Errorf(format string, args ...interface{}) {
 }
 
 func createTestIntegratedUnit() *IntegratedUnit {
+	var executablePath string
+	var args []string
+	var workingDirectory string
+
+	// Set platform-specific defaults
+	if runtime.GOOS == "windows" {
+		executablePath = "C:\\Windows\\System32\\cmd.exe"
+		args = []string{"/c", "echo", "test"}
+		workingDirectory = "C:\\Windows\\Temp"
+	} else {
+		executablePath = "/bin/echo"
+		args = []string{"test"}
+		workingDirectory = "/tmp"
+	}
+
 	return &IntegratedUnit{
 		Metadata: UnitMetadata{
 			Name:        "test-integrated-service",
@@ -46,9 +61,9 @@ func createTestIntegratedUnit() *IntegratedUnit {
 		},
 		Control: ManagedProcessControlConfig{
 			Execution: ExecutionConfig{
-				ExecutablePath:   "/usr/bin/test-service",
-				Args:             []string{"--config", "test.conf"},
-				WorkingDirectory: "/tmp",
+				ExecutablePath:   executablePath,
+				Args:             args,
+				WorkingDirectory: workingDirectory,
 				WaitDelay:        10 * time.Second,
 			},
 			Restart: RestartConfig{
@@ -170,13 +185,6 @@ func TestIntegratedWorker_ExecuteCmd_ValidContext(t *testing.T) {
 
 	// Create a unit with a valid executable (use 'echo' which should exist on most systems)
 	unit := createTestIntegratedUnit()
-	if runtime.GOOS == "windows" {
-		unit.Control.Execution.ExecutablePath = "C:\\Windows\\System32\\cmd.exe"
-		unit.Control.Execution.Args = []string{"/c", "echo", "test"}
-	} else {
-		unit.Control.Execution.ExecutablePath = "/bin/echo"
-		unit.Control.Execution.Args = []string{"test"}
-	}
 
 	worker := NewIntegratedWorker("test-integrated-6", unit, logger).(*integratedWorker)
 
@@ -229,13 +237,6 @@ func TestIntegratedWorker_ExecuteCmd_PortAllocation(t *testing.T) {
 	logger.On("Debugf", mock.Anything, mock.Anything).Maybe()
 
 	unit := createTestIntegratedUnit()
-	if runtime.GOOS == "windows" {
-		unit.Control.Execution.ExecutablePath = "C:\\Windows\\System32\\cmd.exe"
-		unit.Control.Execution.Args = []string{"/c", "echo", "test"}
-	} else {
-		unit.Control.Execution.ExecutablePath = "/bin/echo"
-		unit.Control.Execution.Args = []string{"test"}
-	}
 
 	worker := NewIntegratedWorker("test-integrated-7", unit, logger).(*integratedWorker)
 
@@ -343,13 +344,6 @@ func TestIntegratedWorker_GetFreePort(t *testing.T) {
 	logger.On("Debugf", mock.Anything, mock.Anything).Maybe()
 
 	unit := createTestIntegratedUnit()
-	if runtime.GOOS == "windows" {
-		unit.Control.Execution.ExecutablePath = "C:\\Windows\\System32\\cmd.exe"
-		unit.Control.Execution.Args = []string{"/c", "echo", "test"}
-	} else {
-		unit.Control.Execution.ExecutablePath = "/bin/echo"
-		unit.Control.Execution.Args = []string{"test"}
-	}
 
 	worker := NewIntegratedWorker("test-integrated-10", unit, logger).(*integratedWorker)
 

@@ -10,10 +10,12 @@ import (
 )
 
 type managedWorker struct {
-	id         string
-	unit       *ManagedUnit
-	logger     logging.Logger
-	pidManager *PIDFileManager
+	id                   string
+	metadata             UnitMetadata
+	processControlConfig ManagedProcessControlConfig
+	healthCheckConfig    HealthCheckConfig
+	logger               logging.Logger
+	pidManager           *PIDFileManager
 }
 
 func NewManagedWorker(id string, unit *ManagedUnit, logger logging.Logger) Worker {
@@ -26,10 +28,12 @@ func NewManagedWorker(id string, unit *ManagedUnit, logger logging.Logger) Worke
 	}
 
 	return &managedWorker{
-		id:         id,
-		unit:       unit,
-		logger:     logger,
-		pidManager: NewPIDFileManager(*pidConfig),
+		id:                   id,
+		metadata:             unit.Metadata,
+		processControlConfig: unit.Control,
+		healthCheckConfig:    unit.HealthCheck,
+		logger:               logger,
+		pidManager:           NewPIDFileManager(*pidConfig),
 	}
 }
 
@@ -38,7 +42,7 @@ func (w *managedWorker) ID() string {
 }
 
 func (w *managedWorker) Metadata() UnitMetadata {
-	return w.unit.Metadata
+	return w.metadata
 }
 
 func (w *managedWorker) ProcessControlOptions() ProcessControlOptions {
@@ -54,10 +58,10 @@ func (w *managedWorker) ProcessControlOptions() ProcessControlOptions {
 			CheckInterval: 30 * time.Second,
 		},
 		ExecuteCmd:      w.ExecuteCmd,
-		Restart:         &w.unit.Control.Restart,
-		Limits:          &w.unit.Control.Limits,
-		GracefulTimeout: w.unit.Control.GracefulTimeout,
-		HealthCheck:     &w.unit.HealthCheck,
+		Restart:         &w.processControlConfig.Restart,
+		Limits:          &w.processControlConfig.Limits,
+		GracefulTimeout: w.processControlConfig.GracefulTimeout,
+		HealthCheck:     &w.healthCheckConfig,
 	}
 }
 
@@ -67,9 +71,9 @@ func (w *managedWorker) ExecuteCmd(ctx context.Context) (*exec.Cmd, io.ReadClose
 		return nil, nil, nil, NewValidationError("context cannot be nil", nil)
 	}
 
-	w.logger.Infof("Executing managed worker command, id: %s, config: %+v", w.id, w.unit.Control)
+	w.logger.Infof("Executing managed worker command, id: %s, config: %+v", w.id, w.processControlConfig)
 
-	execution := w.unit.Control.Execution
+	execution := w.processControlConfig.Execution
 
 	// Create the standard execute command
 	stdCmd := NewStdExecuteCmd(execution, w.logger)
@@ -78,8 +82,17 @@ func (w *managedWorker) ExecuteCmd(ctx context.Context) (*exec.Cmd, io.ReadClose
 		return nil, nil, nil, NewProcessError("failed to execute managed worker command", err).WithContext("worker_id", w.id)
 	}
 
+	// Write PID file
+	if err := w.pidManager.WritePIDFile(w.id, cmd.Process.Pid); err != nil {
+		// Log error but don't fail - the process is already running
+		w.logger.Errorf("Failed to write PID file for worker %s: %v", w.id, err)
+	} else {
+		pidFile := w.pidManager.GeneratePIDFilePath(w.id)
+		w.logger.Infof("PID file written for worker %s: %s (PID: %d)", w.id, pidFile, cmd.Process.Pid)
+	}
+
 	// Create health check configuration based on the unit's health check settings
-	healthCheckConfig := &w.unit.HealthCheck
+	healthCheckConfig := &w.healthCheckConfig
 
 	w.logger.Infof("Managed worker command executed successfully, id: %s, PID: %d", w.id, cmd.Process.Pid)
 

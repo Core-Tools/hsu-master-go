@@ -73,6 +73,24 @@ func (m *PIDFileManager) GeneratePIDFilePath(workerID string) string {
 	return filepath.Join(baseDir, workerID+".pid")
 }
 
+// WritePIDFile writes the process PID to the appropriate file for the given worker ID
+func (m *PIDFileManager) WritePIDFile(workerID string, pid int) error {
+	pidFilePath := m.GeneratePIDFilePath(workerID)
+
+	// Validate directory exists and is writable
+	if err := m.ValidatePIDFileDirectory(pidFilePath); err != nil {
+		return NewIOError("PID file directory validation failed", err).WithContext("pid_file", pidFilePath)
+	}
+
+	// Write PID to file
+	pidContent := fmt.Sprintf("%d\n", pid)
+	if err := os.WriteFile(pidFilePath, []byte(pidContent), 0644); err != nil {
+		return NewIOError("failed to write PID file", err).WithContext("pid_file", pidFilePath).WithContext("pid", pid)
+	}
+
+	return nil
+}
+
 // getBaseDirectory returns the appropriate base directory for PID files
 func (m *PIDFileManager) getBaseDirectory() string {
 	// Use explicit configuration if provided

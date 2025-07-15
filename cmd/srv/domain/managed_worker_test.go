@@ -2,6 +2,8 @@ package domain
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -38,6 +40,21 @@ func (m *MockManagedLogger) Errorf(format string, args ...interface{}) {
 }
 
 func createTestManagedUnit() *ManagedUnit {
+	var executablePath string
+	var args []string
+	var workingDirectory string
+
+	// Set platform-specific defaults
+	if runtime.GOOS == "windows" {
+		executablePath = "C:\\Windows\\System32\\cmd.exe"
+		args = []string{"/c", "echo", "test"}
+		workingDirectory = "C:\\Windows\\Temp"
+	} else {
+		executablePath = "/bin/echo"
+		args = []string{"test"}
+		workingDirectory = "/tmp"
+	}
+
 	return &ManagedUnit{
 		Metadata: UnitMetadata{
 			Name:        "test-managed-unit",
@@ -45,9 +62,9 @@ func createTestManagedUnit() *ManagedUnit {
 		},
 		Control: ManagedProcessControlConfig{
 			Execution: ExecutionConfig{
-				ExecutablePath:   "/usr/bin/test",
-				Args:             []string{"--test"},
-				WorkingDirectory: "/tmp",
+				ExecutablePath:   executablePath,
+				Args:             args,
+				WorkingDirectory: workingDirectory,
 				WaitDelay:        5 * time.Second,
 			},
 			Restart: RestartConfig{
@@ -196,16 +213,10 @@ func TestManagedWorker_ExecuteCmd_ValidContext(t *testing.T) {
 	logger := &MockManagedLogger{}
 	logger.On("Infof", mock.Anything, mock.Anything).Maybe()
 	logger.On("Debugf", mock.Anything, mock.Anything).Maybe()
+	logger.On("Errorf", mock.Anything, mock.Anything).Maybe()
 
-	// Create a unit with a valid executable (use 'echo' which should exist on most systems)
+	// Create a unit with platform-appropriate executable (handled by createTestManagedUnit)
 	unit := createTestManagedUnit()
-	if runtime.GOOS == "windows" {
-		unit.Control.Execution.ExecutablePath = "C:\\Windows\\System32\\cmd.exe"
-		unit.Control.Execution.Args = []string{"/c", "echo", "test"}
-	} else {
-		unit.Control.Execution.ExecutablePath = "/bin/echo"
-		unit.Control.Execution.Args = []string{"test"}
-	}
 
 	worker := NewManagedWorker("test-managed-7", unit, logger).(*managedWorker)
 
@@ -233,6 +244,111 @@ func TestManagedWorker_ExecuteCmd_ValidContext(t *testing.T) {
 	}
 
 	logger.AssertExpectations(t)
+}
+
+func TestManagedWorker_ExecuteCmd_PIDFileWriting(t *testing.T) {
+	// Create a temporary directory for PID files
+	tempDir := t.TempDir()
+
+	pidConfig := PIDFileConfig{
+		BaseDirectory:   tempDir,
+		ServiceContext:  UserService,
+		AppName:         "test-app",
+		UseSubdirectory: false,
+	}
+
+	var executablePath string
+	var args []string
+	var workingDirectory string
+
+	// Set platform-specific defaults
+	if runtime.GOOS == "windows" {
+		executablePath = "C:\\Windows\\System32\\cmd.exe"
+		args = []string{"/c", "echo", "test"}
+		workingDirectory = "C:\\Windows\\Temp"
+	} else {
+		executablePath = "/bin/echo"
+		args = []string{"test"}
+		workingDirectory = "/tmp"
+	}
+
+	// Create test unit with PID file configuration
+	unit := &ManagedUnit{
+		Metadata: UnitMetadata{
+			Name:        "Test Worker",
+			Description: "Test worker for PID file testing",
+		},
+		Control: ManagedProcessControlConfig{
+			Execution: ExecutionConfig{
+				ExecutablePath:   executablePath,
+				Args:             args,
+				WorkingDirectory: workingDirectory,
+				Environment:      []string{},
+				PIDFileConfig:    &pidConfig,
+				WaitDelay:        5 * time.Second,
+			},
+			GracefulTimeout: 30 * time.Second,
+			Restart: RestartConfig{
+				Policy:      RestartOnFailure,
+				MaxRetries:  3,
+				RetryDelay:  5 * time.Second,
+				BackoffRate: 2.0,
+			},
+			Limits: ResourceLimits{
+				CPU:          1.0,
+				Memory:       512 * 1024 * 1024, // 512MB
+				MaxProcesses: 10,
+				MaxOpenFiles: 100,
+			},
+		},
+		HealthCheck: HealthCheckConfig{
+			Type: HealthCheckTypeProcess,
+			RunOptions: HealthCheckRunOptions{
+				Interval:         30 * time.Second,
+				Timeout:          5 * time.Second,
+				Retries:          3,
+				SuccessThreshold: 1,
+				FailureThreshold: 3,
+			},
+		},
+	}
+
+	// Create worker
+	logger := &MockManagedLogger{}
+	logger.On("Infof", mock.Anything, mock.Anything).Maybe()
+	logger.On("Debugf", mock.Anything, mock.Anything).Maybe()
+	logger.On("Errorf", mock.Anything, mock.Anything).Maybe()
+
+	worker := NewManagedWorker("test-worker", unit, logger).(*managedWorker)
+
+	// Execute command
+	ctx := context.Background()
+	cmd, stdout, healthConfig, err := worker.ExecuteCmd(ctx)
+
+	// Verify command execution
+	assert.NoError(t, err)
+	require.NotNil(t, cmd)
+	assert.NotNil(t, stdout)
+	assert.NotNil(t, healthConfig)
+	assert.NotNil(t, cmd.Process)
+
+	// Verify PID file was created
+	pidFilePath := worker.pidManager.GeneratePIDFilePath("test-worker")
+	assert.FileExists(t, pidFilePath)
+
+	// Verify PID file content
+	content, err := os.ReadFile(pidFilePath)
+	assert.NoError(t, err)
+	expectedContent := fmt.Sprintf("%d\n", cmd.Process.Pid)
+	assert.Equal(t, expectedContent, string(content))
+
+	// Clean up
+	if stdout != nil {
+		stdout.Close()
+	}
+	if cmd != nil && cmd.Process != nil {
+		cmd.Process.Kill()
+	}
 }
 
 func TestManagedWorker_IntegrationWithProcessControlOptions(t *testing.T) {

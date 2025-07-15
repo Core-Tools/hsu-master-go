@@ -71,10 +71,11 @@ func (w *integratedWorker) ExecuteCmd(ctx context.Context) (*exec.Cmd, io.ReadCl
 		return nil, nil, nil, NewValidationError("context cannot be nil", nil)
 	}
 
-	w.logger.Infof("Executing command, config: %+v", w.processControlConfig)
+	w.logger.Infof("Executing integrated worker command, id: %s, config: %+v", w.id, w.processControlConfig)
 
 	execution := w.processControlConfig.Execution
 
+	// Get a free port for the gRPC server
 	port, err := getFreePort()
 	if err != nil {
 		return nil, nil, nil, NewNetworkError("failed to get free port", err)
@@ -89,6 +90,15 @@ func (w *integratedWorker) ExecuteCmd(ctx context.Context) (*exec.Cmd, io.ReadCl
 	cmd, stdout, err := stdCmd(ctx)
 	if err != nil {
 		return nil, nil, nil, NewProcessError("failed to execute command", err).WithContext("port", port)
+	}
+
+	// Write PID file
+	if err := w.pidManager.WritePIDFile(w.id, cmd.Process.Pid); err != nil {
+		// Log error but don't fail - the process is already running
+		w.logger.Errorf("Failed to write PID file for worker %s: %v", w.id, err)
+	} else {
+		pidFile := w.pidManager.GeneratePIDFilePath(w.id)
+		w.logger.Infof("PID file written for worker %s: %s (PID: %d)", w.id, pidFile, cmd.Process.Pid)
 	}
 
 	healthCheckConfig := &HealthCheckConfig{
