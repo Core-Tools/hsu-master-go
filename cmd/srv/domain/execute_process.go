@@ -181,6 +181,9 @@ type ExecutionConfig struct {
 	Environment      []string
 	WorkingDirectory string
 	WaitDelay        time.Duration
+
+	// PID file configuration (optional)
+	PIDFileConfig *PIDFileConfig
 }
 
 type StdExecuteCmd func(ctx context.Context) (*exec.Cmd, io.ReadCloser, error)

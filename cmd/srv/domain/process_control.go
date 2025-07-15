@@ -335,7 +335,7 @@ func (pc *processControl) terminateProcess(ctx context.Context) error {
 	// Determine graceful timeout
 	gracefulTimeout := pc.config.GracefulTimeout
 	if gracefulTimeout <= 0 {
-		gracefulTimeout = 30 * time.Second // Default timeout
+		gracefulTimeout = 30 * time.Second // Timeout super-default
 	}
 
 	// Create a channel to signal when process exits

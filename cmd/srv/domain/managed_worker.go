@@ -1,5 +1,87 @@
 package domain
 
+import (
+	"context"
+	"io"
+	"os/exec"
+	"time"
+
+	"github.com/core-tools/hsu-master/pkg/logging"
+)
+
 type managedWorker struct {
-	Unit *ManagedUnit
+	id         string
+	unit       *ManagedUnit
+	logger     logging.Logger
+	pidManager *PIDFileManager
+}
+
+func NewManagedWorker(id string, unit *ManagedUnit, logger logging.Logger) Worker {
+	// Get PID file configuration from unit or use default
+	pidConfig := unit.Control.Execution.PIDFileConfig
+	if pidConfig == nil {
+		// Use default system service configuration
+		defaultConfig := GetRecommendedPIDFileConfig("system", DefaultAppName)
+		pidConfig = &defaultConfig
+	}
+
+	return &managedWorker{
+		id:         id,
+		unit:       unit,
+		logger:     logger,
+		pidManager: NewPIDFileManager(*pidConfig),
+	}
+}
+
+func (w *managedWorker) ID() string {
+	return w.id
+}
+
+func (w *managedWorker) Metadata() UnitMetadata {
+	return w.unit.Metadata
+}
+
+func (w *managedWorker) ProcessControlOptions() ProcessControlOptions {
+	pidFile := w.pidManager.GeneratePIDFilePath(w.id)
+
+	return ProcessControlOptions{
+		CanAttach:    true, // Can attach to existing processes as fallback
+		CanTerminate: true, // Can terminate processes
+		CanRestart:   true, // Can restart processes
+		Discovery: DiscoveryConfig{
+			Method:        DiscoveryMethodPIDFile,
+			PIDFile:       pidFile,
+			CheckInterval: 30 * time.Second,
+		},
+		ExecuteCmd:      w.ExecuteCmd,
+		Restart:         &w.unit.Control.Restart,
+		Limits:          &w.unit.Control.Limits,
+		GracefulTimeout: w.unit.Control.GracefulTimeout,
+		HealthCheck:     &w.unit.HealthCheck,
+	}
+}
+
+func (w *managedWorker) ExecuteCmd(ctx context.Context) (*exec.Cmd, io.ReadCloser, *HealthCheckConfig, error) {
+	// Validate context
+	if ctx == nil {
+		return nil, nil, nil, NewValidationError("context cannot be nil", nil)
+	}
+
+	w.logger.Infof("Executing managed worker command, id: %s, config: %+v", w.id, w.unit.Control)
+
+	execution := w.unit.Control.Execution
+
+	// Create the standard execute command
+	stdCmd := NewStdExecuteCmd(execution, w.logger)
+	cmd, stdout, err := stdCmd(ctx)
+	if err != nil {
+		return nil, nil, nil, NewProcessError("failed to execute managed worker command", err).WithContext("worker_id", w.id)
+	}
+
+	// Create health check configuration based on the unit's health check settings
+	healthCheckConfig := &w.unit.HealthCheck
+
+	w.logger.Infof("Managed worker command executed successfully, id: %s, PID: %d", w.id, cmd.Process.Pid)
+
+	return cmd, stdout, healthCheckConfig, nil
 }
