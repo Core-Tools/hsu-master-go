@@ -132,10 +132,13 @@ func ensureExecutable(path string) error {
 		}
 
 		for loopCount := 1; ; loopCount++ {
-			l.logger.Debugf("Starting process (iteration %d): %s %v", loopCount, l.command.path, l.command.args)
+			// Reduce log verbosity for frequent restarts - log first 5 attempts, then every 10th
+			if loopCount <= 5 || loopCount%10 == 0 {
+				l.logger.Debugf("Starting process (iteration %d): %s %v", loopCount, l.command.path, l.command.args)
+			}
 			cmd, stdout, err := l.command.start(l.ctx)
 			if err != nil {
-				l.logger.Errorf("Failed to start process: %v, retrying in %v seconds", err, retryPeriod)
+				l.logger.Errorf("Failed to start process (iteration %d): %v, retrying in %v seconds", loopCount, err, retryPeriod)
 
 				select {
 				case <-l.ctx.Done():
@@ -203,13 +206,13 @@ func ensureExecutable(path string) error {
 		scanner := bufio.NewScanner(stdout)
 		for scanner.Scan() {
 			lineCount++
-			text := scanner.Text()
-			r.logger.Debugf(text)
+			// Note: Individual line output logging removed to prevent log flooding
+			// Process output is still captured and can be accessed via other means
 		}
 		if err := scanner.Err(); err != nil {
 			r.logger.Errorf("stdout.Read failed: %v", err)
 		}
-		r.logger.Debugf("Read %d lines from process", lineCount)
+		r.logger.Debugf("Process output captured: %d lines", lineCount)
 	}
 */
 

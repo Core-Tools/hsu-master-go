@@ -74,14 +74,25 @@ func createTestWorker(id string) *MockWorker {
 	// Use OS-dependent path for PID file
 	var pidFile string
 	if runtime.GOOS == "windows" {
-		pidFile = "C:\\Temp\\test.pid"
+		pidFile = fmt.Sprintf("C:\\temp\\%s.pid", id)
 	} else {
-		pidFile = "/tmp/test.pid"
+		pidFile = fmt.Sprintf("/tmp/%s.pid", id)
 	}
 
 	worker := &MockWorker{}
 	worker.On("ID").Return(id)
-	// Note: Metadata() is not called by AddWorker, so we don't set up expectation for it
+	worker.On("Metadata").Return(UnitMetadata{
+		Name:        id,
+		Description: fmt.Sprintf("Test worker %s", id),
+	}).Maybe() // Make this optional since AddWorker doesn't call Metadata()
+
+	// Create a mock logger for the test
+	mockLogger := &MockLogger{}
+	mockLogger.On("Debugf", mock.Anything, mock.Anything).Maybe()
+	mockLogger.On("Infof", mock.Anything, mock.Anything).Maybe()
+	mockLogger.On("Warnf", mock.Anything, mock.Anything).Maybe()
+	mockLogger.On("Errorf", mock.Anything, mock.Anything).Maybe()
+
 	worker.On("ProcessControlOptions").Return(ProcessControlOptions{
 		CanAttach:    true,
 		CanTerminate: true,
@@ -90,7 +101,7 @@ func createTestWorker(id string) *MockWorker {
 			Method:  DiscoveryMethodPIDFile,
 			PIDFile: pidFile,
 		},
-		AttachCmd: NewStdAttachCmd(nil), // Add AttachCmd since CanAttach is true
+		AttachCmd: NewStdAttachCmd(nil, mockLogger, id), // Add AttachCmd with logger and worker ID
 	})
 	return worker
 }

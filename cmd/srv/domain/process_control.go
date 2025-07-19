@@ -164,12 +164,14 @@ type processControl struct {
 	stdout        io.ReadCloser
 	healthMonitor HealthMonitor
 	logger        logging.Logger
+	workerID      string
 }
 
-func NewProcessControl(config ProcessControlOptions, logger logging.Logger) ProcessControl {
+func NewProcessControl(config ProcessControlOptions, workerID string, logger logging.Logger) ProcessControl {
 	return &processControl{
-		config: config,
-		logger: logger,
+		config:   config,
+		logger:   logger,
+		workerID: workerID,
 	}
 }
 
@@ -191,7 +193,8 @@ func (pc *processControl) Start(ctx context.Context) error {
 		return NewValidationError("context cannot be nil", nil)
 	}
 
-	pc.logger.Infof("Starting process control, config: %+v", pc.config)
+	pc.logger.Infof("Starting process control for worker %s, can_attach: %t, can_execute: %t, can_terminate: %t",
+		pc.workerID, pc.config.CanAttach, (pc.config.ExecuteCmd != nil), pc.config.CanTerminate)
 
 	var process *os.Process
 	var state *os.ProcessState
@@ -204,19 +207,19 @@ func (pc *processControl) Start(ctx context.Context) error {
 	attachCmd := pc.config.AttachCmd
 
 	if pc.config.CanAttach && attachCmd != nil {
-		pc.logger.Infof("Trying to attach to process...")
+		pc.logger.Infof("Attempting to attach to existing process, worker: %s, discovery: %s", pc.workerID, pc.config.Discovery.Method)
 
 		process, state, stdout, healthCheckConfig, err = attachCmd(pc.config.Discovery)
 		if err == nil {
-			pc.logger.Infof("Attached to process, pid: %d", process.Pid)
+			pc.logger.Infof("Successfully attached to existing process, worker: %s, PID: %d", pc.workerID, process.Pid)
 			executeCmd = nil // attached successfully, no need to execute cmd
 		} else {
-			pc.logger.Warnf("Failed to attach to process: %v", err)
+			pc.logger.Warnf("Failed to attach to existing process, worker: %s, error: %v", pc.workerID, err)
 		}
 	}
 
 	if executeCmd != nil { // can't attach or not attached
-		pc.logger.Infof("Running ExecuteCmd...")
+		pc.logger.Infof("Executing new process, worker: %s", pc.workerID)
 
 		var cmd *exec.Cmd
 		cmd, stdout, healthCheckConfig, err = executeCmd(ctx)
@@ -225,7 +228,7 @@ func (pc *processControl) Start(ctx context.Context) error {
 		}
 
 		process, state = cmd.Process, cmd.ProcessState
-		pc.logger.Infof("Executed command, pid: %d", process.Pid)
+		pc.logger.Infof("New process started successfully, worker: %s, PID: %d", pc.workerID, process.Pid)
 	}
 
 	// Check if context was cancelled during startup
@@ -250,9 +253,9 @@ func (pc *processControl) Start(ctx context.Context) error {
 
 	var healthMonitor HealthMonitor
 	if healthCheckConfig != nil {
-		pc.logger.Infof("Starting health monitor, config: %+v", healthCheckConfig)
+		pc.logger.Infof("Starting health monitor for worker %s, config: %+v", pc.workerID, healthCheckConfig)
 
-		healthMonitor = NewHealthMonitor(healthCheckConfig)
+		healthMonitor = NewHealthMonitor(healthCheckConfig, pc.logger, pc.workerID)
 		healthMonitor.Start()
 	}
 	pc.healthMonitor = healthMonitor

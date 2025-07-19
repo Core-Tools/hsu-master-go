@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"time"
 
 	"github.com/core-tools/hsu-master/pkg/logging"
 )
@@ -35,7 +36,7 @@ func NewIntegratedWorker(id string, unit *IntegratedUnit, logger logging.Logger)
 		processControlConfig:  unit.Control,
 		healthCheckRunOptions: unit.HealthCheckRunOptions,
 		logger:                logger,
-		pidManager:            NewProcessFileManager(*pidConfig),
+		pidManager:            NewProcessFileManager(*pidConfig, logger),
 	}
 }
 
@@ -55,8 +56,9 @@ func (w *integratedWorker) ProcessControlOptions() ProcessControlOptions {
 		CanTerminate: true,
 		CanRestart:   true,
 		Discovery: DiscoveryConfig{
-			Method:  DiscoveryMethodPIDFile,
-			PIDFile: pidFile,
+			Method:        DiscoveryMethodPIDFile,
+			PIDFile:       pidFile,
+			CheckInterval: 30 * time.Second,
 		},
 		ExecuteCmd:      w.ExecuteCmd,
 		AttachCmd:       w.AttachCmd, // Use custom AttachCmd that creates dynamic gRPC health check
@@ -69,8 +71,10 @@ func (w *integratedWorker) ProcessControlOptions() ProcessControlOptions {
 
 // AttachCmd creates a dynamic gRPC health check configuration by reading the port file
 func (w *integratedWorker) AttachCmd(config DiscoveryConfig) (*os.Process, *os.ProcessState, io.ReadCloser, *HealthCheckConfig, error) {
+	w.logger.Infof("Executing integrated worker attach command, id: %s, config: %+v", w.id, config)
+
 	// Use standard attachment to discover the process
-	stdAttachCmd := NewStdAttachCmd(nil) // No health check config yet
+	stdAttachCmd := NewStdAttachCmd(nil, w.logger, w.id) // No health check config yet, but include logging
 	process, state, stdout, _, err := stdAttachCmd(config)
 	if err != nil {
 		return nil, nil, nil, nil, err
@@ -107,7 +111,7 @@ func (w *integratedWorker) ExecuteCmd(ctx context.Context) (*exec.Cmd, io.ReadCl
 		return nil, nil, nil, NewValidationError("context cannot be nil", nil)
 	}
 
-	w.logger.Infof("Executing integrated worker command, id: %s, config: %+v", w.id, w.processControlConfig)
+	w.logger.Infof("Executing integrated worker command, id: %s", w.id)
 
 	execution := w.processControlConfig.Execution
 

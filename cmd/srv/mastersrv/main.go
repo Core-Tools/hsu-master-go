@@ -16,8 +16,11 @@ import (
 )
 
 type flagOptions struct {
-	Port    int    `long:"port" description:"port to listen on"`
-	Process string `long:"process" description:"process to start"`
+	Port       int    `long:"port" description:"port to listen on"`
+	Process    string `long:"process" description:"process to start"`
+	Integrated bool   `long:"integrated" description:"use integrated mode"`
+	Managed    bool   `long:"managed" description:"use managed mode"`
+	Unmanaged  bool   `long:"unmanaged" description:"use unmanaged mode"`
 }
 
 func logPrefix(module string) string {
@@ -71,37 +74,89 @@ func main() {
 		os.Exit(1)
 	}
 
-	unit := &domain.IntegratedUnit{
-		Metadata: domain.UnitMetadata{
-			Name: "test",
-		},
-		Control: domain.ManagedProcessControlConfig{
-			Execution: domain.ExecutionConfig{
-				ExecutablePath: opts.Process,
-				WaitDelay:      10 * time.Second,
+	workers := []domain.Worker{}
+	if opts.Integrated {
+		unit := &domain.IntegratedUnit{
+			Metadata: domain.UnitMetadata{
+				Name: "test-integrated",
 			},
-		},
-		HealthCheckRunOptions: domain.HealthCheckRunOptions{
-			Interval: 10 * time.Second,
-			Timeout:  10 * time.Second,
-		},
+			Control: domain.ManagedProcessControlConfig{
+				Execution: domain.ExecutionConfig{
+					ExecutablePath: opts.Process,
+					WaitDelay:      10 * time.Second,
+				},
+				Restart: domain.RestartConfig{
+					Policy:      domain.RestartAlways,
+					MaxRetries:  3,
+					RetryDelay:  10 * time.Second,
+					BackoffRate: 1.5,
+				},
+			},
+			HealthCheckRunOptions: domain.HealthCheckRunOptions{
+				Interval: 10 * time.Second,
+				Timeout:  10 * time.Second,
+			},
+		}
+		worker := domain.NewIntegratedWorker("test-integrated", unit, masterLogger)
+		workers = append(workers, worker)
 	}
-	worker := domain.NewIntegratedWorker("test-01", unit, masterLogger)
-
-	// Add worker (registration only)
-	err = master.AddWorker(worker)
-	if err != nil {
-		logger.Errorf("Failed to add worker: %v", err)
-		os.Exit(1)
+	if opts.Managed {
+		unit := &domain.ManagedUnit{
+			Metadata: domain.UnitMetadata{
+				Name: "test-managed",
+			},
+			Control: domain.ManagedProcessControlConfig{
+				Execution: domain.ExecutionConfig{
+					ExecutablePath: opts.Process,
+					WaitDelay:      10 * time.Second,
+				},
+				Restart: domain.RestartConfig{
+					Policy:      domain.RestartAlways,
+					MaxRetries:  3,
+					RetryDelay:  10 * time.Second,
+					BackoffRate: 1.5,
+				},
+			},
+			HealthCheck: domain.HealthCheckConfig{
+				Type: domain.HealthCheckTypeHTTP,
+				HTTP: domain.HTTPHealthCheckConfig{
+					URL: "http://localhost:8080/health",
+				},
+				RunOptions: domain.HealthCheckRunOptions{
+					Interval: 10 * time.Second,
+					Timeout:  10 * time.Second,
+				},
+			},
+		}
+		worker := domain.NewManagedWorker("test-managed", unit, masterLogger)
+		workers = append(workers, worker)
+	}
+	if opts.Unmanaged {
+		unit := &domain.UnmanagedUnit{
+			Metadata: domain.UnitMetadata{
+				Name: "test-unmanaged",
+			},
+		}
+		worker := domain.NewUnmanagedWorker("test-unmanaged", unit, masterLogger)
+		workers = append(workers, worker)
 	}
 
 	ctx := context.Background()
 
-	// Start worker (lifecycle management)
-	err = master.StartWorker(ctx, "test-01")
-	if err != nil {
-		logger.Errorf("Failed to start worker: %v", err)
-		os.Exit(1)
+	for _, worker := range workers {
+		// Add worker (registration only)
+		err = master.AddWorker(worker)
+		if err != nil {
+			logger.Errorf("Failed to add worker: %v", err)
+			os.Exit(1)
+		}
+
+		// Start worker (lifecycle management)
+		err = master.StartWorker(ctx, worker.ID())
+		if err != nil {
+			logger.Errorf("Failed to start worker: %v", err)
+			os.Exit(1)
+		}
 	}
 
 	master.Run(ctx)

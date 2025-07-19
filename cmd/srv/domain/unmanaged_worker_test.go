@@ -66,11 +66,11 @@ func createTestUnmanagedUnit() *UnmanagedUnit {
 		HealthCheck: HealthCheckConfig{
 			Type: HealthCheckTypeProcess,
 			RunOptions: HealthCheckRunOptions{
-				Interval:         60 * time.Second,
-				Timeout:          10 * time.Second,
-				Retries:          2,
-				SuccessThreshold: 1,
-				FailureThreshold: 2,
+				Enabled:      true,
+				Interval:     30 * time.Second,
+				Timeout:      5 * time.Second,
+				InitialDelay: 10 * time.Second,
+				Retries:      3,
 			},
 		},
 	}
@@ -97,17 +97,18 @@ func createTestUnmanagedUnitWithPortDiscovery() *UnmanagedUnit {
 			GracefulTimeout: 5 * time.Second,
 		},
 		HealthCheck: HealthCheckConfig{
-			Type: HealthCheckTypeTCP,
-			TCP: TCPHealthCheckConfig{
-				Address: "localhost",
-				Port:    8080,
+			Type: HealthCheckTypeGRPC,
+			GRPC: GRPCHealthCheckConfig{
+				Address: "localhost:50051",
+				Service: "CoreService",
+				Method:  "Ping",
 			},
 			RunOptions: HealthCheckRunOptions{
-				Interval:         30 * time.Second,
-				Timeout:          5 * time.Second,
-				Retries:          1,
-				SuccessThreshold: 1,
-				FailureThreshold: 1,
+				Enabled:      true,
+				Interval:     15 * time.Second,
+				Timeout:      3 * time.Second,
+				InitialDelay: 5 * time.Second,
+				Retries:      2,
 			},
 		},
 	}
@@ -145,6 +146,7 @@ func TestUnmanagedWorker_Metadata(t *testing.T) {
 
 func TestUnmanagedWorker_ProcessControlOptions_PIDFile(t *testing.T) {
 	logger := &MockUnmanagedLogger{}
+	logger.On("Debugf", mock.Anything, mock.Anything).Maybe()
 	unit := createTestUnmanagedUnit()
 
 	worker := NewUnmanagedWorker("test-unmanaged-4", unit, logger)
@@ -190,6 +192,7 @@ func TestUnmanagedWorker_ProcessControlOptions_PIDFile(t *testing.T) {
 
 func TestUnmanagedWorker_ProcessControlOptions_Port(t *testing.T) {
 	logger := &MockUnmanagedLogger{}
+	logger.On("Debugf", mock.Anything, mock.Anything).Maybe()
 	unit := createTestUnmanagedUnitWithPortDiscovery()
 
 	worker := NewUnmanagedWorker("test-unmanaged-5", unit, logger)
@@ -227,6 +230,7 @@ func TestUnmanagedWorker_ProcessControlOptions_Port(t *testing.T) {
 
 func TestUnmanagedWorker_IntegrationWithProcessControlOptions(t *testing.T) {
 	logger := &MockUnmanagedLogger{}
+	logger.On("Debugf", mock.Anything, mock.Anything).Maybe()
 	unit := createTestUnmanagedUnit()
 
 	worker := NewUnmanagedWorker("test-unmanaged-6", unit, logger)
@@ -240,6 +244,7 @@ func TestUnmanagedWorker_IntegrationWithProcessControlOptions(t *testing.T) {
 
 func TestUnmanagedWorker_IntegrationWithProcessControlOptions_Port(t *testing.T) {
 	logger := &MockUnmanagedLogger{}
+	logger.On("Debugf", mock.Anything, mock.Anything).Maybe()
 	unit := createTestUnmanagedUnitWithPortDiscovery()
 
 	worker := NewUnmanagedWorker("test-unmanaged-7", unit, logger)
@@ -252,27 +257,33 @@ func TestUnmanagedWorker_IntegrationWithProcessControlOptions_Port(t *testing.T)
 }
 
 func TestUnmanagedWorker_MultipleInstances(t *testing.T) {
-	logger := &MockUnmanagedLogger{}
-	unit := createTestUnmanagedUnit()
+	logger1 := &MockUnmanagedLogger{}
+	logger1.On("Debugf", mock.Anything, mock.Anything).Maybe()
+	logger2 := &MockUnmanagedLogger{}
+	logger2.On("Debugf", mock.Anything, mock.Anything).Maybe()
 
-	worker1 := NewUnmanagedWorker("worker-1", unit, logger)
-	worker2 := NewUnmanagedWorker("worker-2", unit, logger)
+	unit1 := createTestUnmanagedUnit()
+	unit2 := createTestUnmanagedUnitWithPortDiscovery()
+
+	worker1 := NewUnmanagedWorker("test-unmanaged-7", unit1, logger1)
+	worker2 := NewUnmanagedWorker("test-unmanaged-8", unit2, logger2)
 
 	// Test independence
 	assert.NotEqual(t, worker1.ID(), worker2.ID())
-	assert.Equal(t, worker1.Metadata(), worker2.Metadata()) // Same unit, same metadata
+	assert.NotEqual(t, worker1.Metadata(), worker2.Metadata()) // Different units, different metadata
 
-	// Test same discovery configuration (since they share the same unit)
+	// Test different discovery configurations (since they use different units)
 	options1 := worker1.ProcessControlOptions()
 	options2 := worker2.ProcessControlOptions()
 
-	assert.Equal(t, options1.Discovery, options2.Discovery)
-	assert.Equal(t, options1.CanTerminate, options2.CanTerminate)
-	assert.Equal(t, options1.CanRestart, options2.CanRestart)
+	assert.NotEqual(t, options1.Discovery, options2.Discovery)       // Different discovery methods
+	assert.NotEqual(t, options1.CanTerminate, options2.CanTerminate) // Different capabilities too
+	assert.Equal(t, options1.CanRestart, options2.CanRestart)        // Both false for CanRestart
 }
 
 func TestUnmanagedWorker_DifferentCapabilities(t *testing.T) {
 	logger := &MockUnmanagedLogger{}
+	logger.On("Debugf", mock.Anything, mock.Anything).Maybe()
 
 	// Create unit with different capabilities
 	unit1 := createTestUnmanagedUnit()

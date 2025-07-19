@@ -33,7 +33,7 @@ func NewManagedWorker(id string, unit *ManagedUnit, logger logging.Logger) Worke
 		processControlConfig: unit.Control,
 		healthCheckConfig:    unit.HealthCheck,
 		logger:               logger,
-		pidManager:           NewProcessFileManager(*pidConfig),
+		pidManager:           NewProcessFileManager(*pidConfig, logger),
 	}
 }
 
@@ -58,7 +58,7 @@ func (w *managedWorker) ProcessControlOptions() ProcessControlOptions {
 			CheckInterval: 30 * time.Second,
 		},
 		ExecuteCmd:      w.ExecuteCmd,
-		AttachCmd:       NewStdAttachCmd(&w.healthCheckConfig), // Use unit's health check config
+		AttachCmd:       NewStdAttachCmd(&w.healthCheckConfig, w.logger, w.id), // Use unit's health check config with logging
 		Restart:         &w.processControlConfig.Restart,
 		Limits:          &w.processControlConfig.Limits,
 		GracefulTimeout: w.processControlConfig.GracefulTimeout,
@@ -72,7 +72,7 @@ func (w *managedWorker) ExecuteCmd(ctx context.Context) (*exec.Cmd, io.ReadClose
 		return nil, nil, nil, NewValidationError("context cannot be nil", nil)
 	}
 
-	w.logger.Infof("Executing managed worker command, id: %s, config: %+v", w.id, w.processControlConfig)
+	w.logger.Infof("Executing managed worker command, id: %s", w.id)
 
 	execution := w.processControlConfig.Execution
 

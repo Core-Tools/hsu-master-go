@@ -81,11 +81,11 @@ func createTestIntegratedUnit() *IntegratedUnit {
 			GracefulTimeout: 30 * time.Second,
 		},
 		HealthCheckRunOptions: HealthCheckRunOptions{
-			Interval:         30 * time.Second,
-			Timeout:          5 * time.Second,
-			Retries:          3,
-			SuccessThreshold: 1,
-			FailureThreshold: 3,
+			Enabled:      true,
+			Interval:     30 * time.Second,
+			Timeout:      5 * time.Second,
+			InitialDelay: 10 * time.Second,
+			Retries:      3,
 		},
 	}
 }

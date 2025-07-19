@@ -5,16 +5,21 @@ import (
 	"io"
 	"os"
 	"strings"
+
+	"github.com/core-tools/hsu-master/pkg/logging"
 )
 
 // AttachCmd represents a command that attaches to an existing process
 type AttachCmd func(config DiscoveryConfig) (*os.Process, *os.ProcessState, io.ReadCloser, *HealthCheckConfig, error)
 
-// NewStdAttachCmd creates a standard attachment command function
-func NewStdAttachCmd(healthCheckConfig *HealthCheckConfig) AttachCmd {
+// NewStdAttachCmd creates a standard attachment command function with logging
+func NewStdAttachCmd(healthCheckConfig *HealthCheckConfig, logger logging.Logger, workerID string) AttachCmd {
 	return func(config DiscoveryConfig) (*os.Process, *os.ProcessState, io.ReadCloser, *HealthCheckConfig, error) {
+		logger.Infof("Executing standard attach command, worker: %s, discovery: %s, config: %+v", workerID, config.Method, config)
+
 		// Validate discovery configuration
 		if err := ValidateDiscoveryConfig(config); err != nil {
+			logger.Errorf("Discovery configuration validation failed, worker: %s, error: %v", workerID, err)
 			return nil, nil, nil, nil, NewValidationError("invalid discovery configuration", err)
 		}
 
@@ -22,22 +27,31 @@ func NewStdAttachCmd(healthCheckConfig *HealthCheckConfig) AttachCmd {
 		var err error
 
 		// Delegate to specific discovery method
+		logger.Debugf("Starting process discovery, worker: %s, method: %s", workerID, config.Method)
 		switch config.Method {
 		case DiscoveryMethodPIDFile:
+			logger.Debugf("Discovering process by PID file, worker: %s, file: %s", workerID, config.PIDFile)
 			process, err = openProcessByPIDFile(config.PIDFile)
 		case DiscoveryMethodProcessName:
+			logger.Debugf("Discovering process by name, worker: %s, name: %s, args: %v", workerID, config.ProcessName, config.ProcessArgs)
 			process, err = openProcessByName(config.ProcessName, config.ProcessArgs)
 		case DiscoveryMethodPort:
+			logger.Debugf("Discovering process by port, worker: %s, port: %d, protocol: %s", workerID, config.Port, config.Protocol)
 			process, err = openProcessByPort(config.Port, config.Protocol)
 		case DiscoveryMethodServiceName:
+			logger.Debugf("Discovering process by service name, worker: %s, service: %s", workerID, config.ServiceName)
 			process, err = openProcessByServiceName(config.ServiceName)
 		default:
+			logger.Errorf("Unsupported discovery method, worker: %s, method: %s", workerID, config.Method)
 			return nil, nil, nil, nil, NewValidationError("unsupported discovery method: "+string(config.Method), nil)
 		}
 
 		if err != nil {
+			logger.Errorf("Failed to discover process, worker: %s, method: %s, error: %v", workerID, config.Method, err)
 			return nil, nil, nil, nil, NewDiscoveryError("failed to discover process", err).WithContext("discovery_method", string(config.Method))
 		}
+
+		logger.Infof("Successfully attached to process, worker: %s, PID: %d, discovery: %s", workerID, process.Pid, config.Method)
 
 		// For attached processes:
 		// - ProcessState is nil (we haven't waited on the process)

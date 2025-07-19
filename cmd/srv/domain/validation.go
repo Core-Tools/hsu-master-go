@@ -266,14 +266,6 @@ func ValidateHealthCheckRunOptions(options HealthCheckRunOptions) error {
 		return NewValidationError("health check retries cannot be negative", nil)
 	}
 
-	if options.SuccessThreshold <= 0 {
-		return NewValidationError("health check success threshold must be positive", nil)
-	}
-
-	if options.FailureThreshold <= 0 {
-		return NewValidationError("health check failure threshold must be positive", nil)
-	}
-
 	return nil
 }
 

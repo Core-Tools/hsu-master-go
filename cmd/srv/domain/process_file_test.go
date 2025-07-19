@@ -10,14 +10,24 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// ProcessFileMockLogger is a simple mock implementation of Logger for testing
+type ProcessFileMockLogger struct{}
+
+func (m *ProcessFileMockLogger) LogLevelf(level int, format string, args ...interface{}) {}
+func (m *ProcessFileMockLogger) Debugf(format string, args ...interface{})               {}
+func (m *ProcessFileMockLogger) Infof(format string, args ...interface{})                {}
+func (m *ProcessFileMockLogger) Warnf(format string, args ...interface{})                {}
+func (m *ProcessFileMockLogger) Errorf(format string, args ...interface{})               {}
+
 func TestNewProcessFileManager(t *testing.T) {
 	config := ProcessFileConfig{
 		ServiceContext: SystemService,
 		AppName:        "test-app",
 		BaseDirectory:  "/tmp/test",
 	}
+	logger := &ProcessFileMockLogger{}
 
-	manager := NewProcessFileManager(config)
+	manager := NewProcessFileManager(config, logger)
 
 	assert.NotNil(t, manager)
 	assert.Equal(t, config.ServiceContext, manager.config.ServiceContext)
@@ -26,8 +36,9 @@ func TestNewProcessFileManager(t *testing.T) {
 
 func TestNewProcessFileManager_WithDefaults(t *testing.T) {
 	config := ProcessFileConfig{} // Empty config
+	logger := &ProcessFileMockLogger{}
 
-	manager := NewProcessFileManager(config)
+	manager := NewProcessFileManager(config, logger)
 
 	assert.NotNil(t, manager)
 	assert.Equal(t, DefaultAppName, manager.config.AppName)
@@ -41,7 +52,7 @@ func TestGeneratePIDFilePath_SystemService(t *testing.T) {
 		UseSubdirectory: true,
 	}
 
-	manager := NewProcessFileManager(config)
+	manager := NewProcessFileManager(config, &ProcessFileMockLogger{})
 	path := manager.GeneratePIDFilePath("test-worker")
 
 	assert.NotEmpty(t, path)
@@ -60,7 +71,7 @@ func TestGeneratePIDFilePath_UserService(t *testing.T) {
 		UseSubdirectory: true,
 	}
 
-	manager := NewProcessFileManager(config)
+	manager := NewProcessFileManager(config, &ProcessFileMockLogger{})
 	path := manager.GeneratePIDFilePath("test-worker")
 
 	assert.NotEmpty(t, path)
@@ -79,7 +90,7 @@ func TestGeneratePIDFilePath_SessionService(t *testing.T) {
 		UseSubdirectory: false,
 	}
 
-	manager := NewProcessFileManager(config)
+	manager := NewProcessFileManager(config, &ProcessFileMockLogger{})
 	path := manager.GeneratePIDFilePath("test-worker")
 
 	assert.NotEmpty(t, path)
@@ -105,7 +116,7 @@ func TestGeneratePIDFilePath_WithCustomBaseDirectory(t *testing.T) {
 		UseSubdirectory: true,
 	}
 
-	manager := NewProcessFileManager(config)
+	manager := NewProcessFileManager(config, &ProcessFileMockLogger{})
 	path := manager.GeneratePIDFilePath("test-worker")
 
 	assert.NotEmpty(t, path)
@@ -126,7 +137,7 @@ func TestGeneratePIDFilePath_WithoutSubdirectory(t *testing.T) {
 		UseSubdirectory: false,
 	}
 
-	manager := NewProcessFileManager(config)
+	manager := NewProcessFileManager(config, &ProcessFileMockLogger{})
 	path := manager.GeneratePIDFilePath("test-worker")
 
 	assert.NotEmpty(t, path)
@@ -144,7 +155,7 @@ func TestValidatePIDFileDirectory_Success(t *testing.T) {
 		UseSubdirectory: false,
 	}
 
-	manager := NewProcessFileManager(config)
+	manager := NewProcessFileManager(config, &ProcessFileMockLogger{})
 	pidFile := manager.GeneratePIDFilePath("test-worker")
 
 	err := manager.ValidatePIDFileDirectory(pidFile)
@@ -162,7 +173,7 @@ func TestValidatePIDFileDirectory_CreateDirectory(t *testing.T) {
 		UseSubdirectory: false,
 	}
 
-	manager := NewProcessFileManager(config)
+	manager := NewProcessFileManager(config, &ProcessFileMockLogger{})
 	pidFile := manager.GeneratePIDFilePath("test-worker")
 
 	err := manager.ValidatePIDFileDirectory(pidFile)
@@ -179,7 +190,7 @@ func TestValidatePIDFileDirectory_InvalidPath(t *testing.T) {
 		UseSubdirectory: false,
 	}
 
-	manager := NewProcessFileManager(config)
+	manager := NewProcessFileManager(config, &ProcessFileMockLogger{})
 	pidFile := manager.GeneratePIDFilePath("test-worker")
 
 	err := manager.ValidatePIDFileDirectory(pidFile)
@@ -273,7 +284,7 @@ func TestProcessFileManager_MultipleWorkers(t *testing.T) {
 		UseSubdirectory: false,
 	}
 
-	manager := NewProcessFileManager(config)
+	manager := NewProcessFileManager(config, &ProcessFileMockLogger{})
 
 	// Generate paths for multiple workers
 	worker1Path := manager.GeneratePIDFilePath("worker-1")
@@ -292,7 +303,7 @@ func TestProcessFileManager_PathSeparators(t *testing.T) {
 		UseSubdirectory: false,
 	}
 
-	manager := NewProcessFileManager(config)
+	manager := NewProcessFileManager(config, &ProcessFileMockLogger{})
 	path := manager.GeneratePIDFilePath("test-worker")
 
 	assert.NotEmpty(t, path)
@@ -307,7 +318,7 @@ func TestProcessFileManager_WorkerIDValidation(t *testing.T) {
 		UseSubdirectory: false,
 	}
 
-	manager := NewProcessFileManager(config)
+	manager := NewProcessFileManager(config, &ProcessFileMockLogger{})
 
 	// Test with various worker IDs
 	testCases := []string{
@@ -335,7 +346,7 @@ func TestProcessFileManager_WritePIDFile(t *testing.T) {
 		UseSubdirectory: false,
 	}
 
-	manager := NewProcessFileManager(config)
+	manager := NewProcessFileManager(config, &ProcessFileMockLogger{})
 	workerID := "test-worker"
 	pid := 12345
 
@@ -360,7 +371,7 @@ func TestProcessFileManager_WritePIDFile_InvalidDirectory(t *testing.T) {
 		UseSubdirectory: false,
 	}
 
-	manager := NewProcessFileManager(config)
+	manager := NewProcessFileManager(config, &ProcessFileMockLogger{})
 	workerID := "test-worker"
 	pid := 12345
 
@@ -380,7 +391,7 @@ func TestProcessFileManager_WritePIDFile_WithSubdirectory(t *testing.T) {
 		UseSubdirectory: true,
 	}
 
-	manager := NewProcessFileManager(config)
+	manager := NewProcessFileManager(config, &ProcessFileMockLogger{})
 	workerID := "test-worker"
 	pid := 12345
 
@@ -406,7 +417,7 @@ func TestProcessFileManager_WritePortFile(t *testing.T) {
 		UseSubdirectory: false,
 	}
 
-	manager := NewProcessFileManager(config)
+	manager := NewProcessFileManager(config, &ProcessFileMockLogger{})
 	workerID := "test-worker"
 	port := 8080
 
@@ -432,7 +443,7 @@ func TestProcessFileManager_ReadPortFile(t *testing.T) {
 		UseSubdirectory: false,
 	}
 
-	manager := NewProcessFileManager(config)
+	manager := NewProcessFileManager(config, &ProcessFileMockLogger{})
 	workerID := "test-worker"
 	expectedPort := 8080
 
@@ -456,7 +467,7 @@ func TestProcessFileManager_ReadPortFile_InvalidFile(t *testing.T) {
 		UseSubdirectory: false,
 	}
 
-	manager := NewProcessFileManager(config)
+	manager := NewProcessFileManager(config, &ProcessFileMockLogger{})
 	workerID := "nonexistent-worker"
 
 	// Test reading non-existent port file
@@ -474,7 +485,7 @@ func TestProcessFileManager_ReadPortFile_InvalidContent(t *testing.T) {
 		UseSubdirectory: false,
 	}
 
-	manager := NewProcessFileManager(config)
+	manager := NewProcessFileManager(config, &ProcessFileMockLogger{})
 	workerID := "test-worker"
 
 	// Write invalid content to port file
@@ -503,7 +514,7 @@ func TestProcessFileManager_GeneratePortFilePath(t *testing.T) {
 		UseSubdirectory: false,
 	}
 
-	manager := NewProcessFileManager(config)
+	manager := NewProcessFileManager(config, &ProcessFileMockLogger{})
 	workerID := "test-worker"
 
 	portFilePath := manager.GeneratePortFilePath(workerID)
@@ -526,7 +537,7 @@ func TestProcessFileManager_GeneratePortFilePath_WithSubdirectory(t *testing.T) 
 		UseSubdirectory: true,
 	}
 
-	manager := NewProcessFileManager(config)
+	manager := NewProcessFileManager(config, &ProcessFileMockLogger{})
 	workerID := "test-worker"
 
 	portFilePath := manager.GeneratePortFilePath(workerID)

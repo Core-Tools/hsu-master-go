@@ -71,7 +71,8 @@ func (m *Master) AddWorker(worker Worker) error {
 		return NewValidationError("invalid worker process control options", err).WithContext("worker_id", id)
 	}
 
-	m.logger.Infof("Adding worker, id: %s", id)
+	m.logger.Infof("Adding worker, id: %s, can_attach: %t, can_execute: %t, can_terminate: %t, can_restart: %t",
+		id, options.CanAttach, (options.ExecuteCmd != nil), options.CanTerminate, options.CanRestart)
 
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
@@ -87,7 +88,7 @@ func (m *Master) AddWorker(worker Worker) error {
 		Errorf: m.logger.Errorf,
 	})
 
-	processControl := NewProcessControl(options, logger)
+	processControl := NewProcessControl(options, id, logger)
 
 	m.controls[id] = processControl
 

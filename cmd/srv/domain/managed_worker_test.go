@@ -84,11 +84,11 @@ func createTestManagedUnit() *ManagedUnit {
 		HealthCheck: HealthCheckConfig{
 			Type: HealthCheckTypeProcess,
 			RunOptions: HealthCheckRunOptions{
-				Interval:         30 * time.Second,
-				Timeout:          5 * time.Second,
-				Retries:          3,
-				SuccessThreshold: 1,
-				FailureThreshold: 3,
+				Enabled:      true,
+				Interval:     30 * time.Second,
+				Timeout:      5 * time.Second,
+				InitialDelay: 10 * time.Second,
+				Retries:      3,
 			},
 		},
 	}
@@ -301,11 +301,11 @@ func TestManagedWorker_ExecuteCmd_PIDFileWriting(t *testing.T) {
 		HealthCheck: HealthCheckConfig{
 			Type: HealthCheckTypeProcess,
 			RunOptions: HealthCheckRunOptions{
-				Interval:         30 * time.Second,
-				Timeout:          5 * time.Second,
-				Retries:          3,
-				SuccessThreshold: 1,
-				FailureThreshold: 3,
+				Enabled:      true,
+				Interval:     30 * time.Second,
+				Timeout:      5 * time.Second,
+				InitialDelay: 5 * time.Second,
+				Retries:      2,
 			},
 		},
 	}
