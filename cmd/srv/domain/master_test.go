@@ -65,8 +65,9 @@ func createTestMaster(t *testing.T) *Master {
 	logger.On("Errorf", mock.Anything, mock.Anything).Maybe()
 
 	return &Master{
-		logger:   logger,
-		controls: make(map[string]ProcessControl),
+		logger:        logger,
+		controls:      make(map[string]ProcessControl),
+		stateMachines: make(map[string]*WorkerStateMachine), // Initialize state machines map
 	}
 }
 
