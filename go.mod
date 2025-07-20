@@ -2,17 +2,18 @@ module github.com/core-tools/hsu-master-go
 
 go 1.22.3
 
-replace github.com/core-tools/hsu-core => github.com/core-tools/hsu-core/go v0.0.0-20250629192131-f2790593d496
+replace github.com/core-tools/hsu-core => github.com/core-tools/hsu-core/go v0.0.0-20250720161309-36b455e92188
 
 replace github.com/core-tools/hsu-master => .
 
 require (
-	github.com/core-tools/hsu-core v0.0.0-00010101000000-000000000000
+	github.com/core-tools/hsu-core v0.0.0-20250720161309-36b455e92188
 	github.com/core-tools/hsu-master v0.0.0-00010101000000-000000000000
 	github.com/jessevdk/go-flags v1.6.1
 	github.com/stretchr/testify v1.10.0
 	google.golang.org/grpc v1.65.0
 	google.golang.org/protobuf v1.36.6
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
@@ -24,5 +25,4 @@ require (
 	golang.org/x/sys v0.30.0 // indirect
 	golang.org/x/text v0.22.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250218202821-56aae31c358a // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

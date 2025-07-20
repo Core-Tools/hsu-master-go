@@ -136,6 +136,11 @@ func (h *healthMonitor) Stop() {
 func (h *healthMonitor) loop() {
 	defer h.wg.Done()
 
+	if h.config.Type == "" {
+		h.logger.Debugf("Health monitor loop is disabled due to empty type, worker: %s", h.workerID)
+		return
+	}
+
 	h.logger.Debugf("Health monitor loop started, worker: %s", h.workerID)
 
 	// Initial delay before first check

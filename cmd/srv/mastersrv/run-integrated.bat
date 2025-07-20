@@ -1,1 +1,1 @@
-mastersrv.exe --port 50055 --integrated --process "..\\..\\..\\..\\hsu-example1-go\\cmd\\srv\\echogrpcsrv\\echogrpcsrv.exe"
+mastersrv.exe --config config-integrated.yaml

@@ -336,6 +336,11 @@ func (m *Master) StopWorker(ctx context.Context, id string) error {
 }
 
 func (m *Master) Run(ctx context.Context) {
+	stopped := make(chan struct{})
+	m.RunWithStopped(ctx, stopped)
+}
+
+func (m *Master) RunWithStopped(ctx context.Context, stopped chan struct{}) {
 	m.logger.Infof("Starting master...")
 
 	// Transition master to running state
@@ -344,7 +349,7 @@ func (m *Master) Run(ctx context.Context) {
 	m.logger.Infof("Master started successfully, ready to manage workers")
 
 	// Start the server (blocks until shutdown)
-	m.server.Run(func() {
+	m.server.RunWithContextAndStopped(ctx, stopped, func() {
 		m.logger.Infof("Shutting down master...")
 
 		// Transition to stopping state

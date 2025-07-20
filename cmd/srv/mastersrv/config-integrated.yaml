@@ -1,0 +1,14 @@
+master:
+  port: 50055
+
+workers:
+  # Simple integrated worker (enabled field omitted - defaults to true)
+  - id: "test-integrated"
+    type: "integrated"
+    unit:
+      integrated:
+        metadata:
+          name: "Echo gRPC server as integrated unit"
+        control:
+          execution:
+            executable_path: "..\\..\\..\\..\\hsu-example1-go\\cmd\\srv\\echogrpcsrv\\echogrpcsrv.exe"

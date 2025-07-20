@@ -1,0 +1,17 @@
+master:
+  port: 50055
+
+workers:
+  # Simple managed worker (enabled defaults to true)
+  - id: "test-managed"
+    type: "managed"
+    unit:
+      managed:
+        metadata:
+          name: "Echo gRPC server as managed unit"
+        control:
+          execution:
+            executable_path: "..\\..\\..\\..\\hsu-example1-go\\cmd\\srv\\echogrpcsrv\\echogrpcsrv.exe"
+            args: ["--port", "50050"]
+          restart:
+            policy: "on-failure"

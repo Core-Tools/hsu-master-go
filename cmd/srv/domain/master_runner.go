@@ -57,7 +57,10 @@ func RunWithConfigStruct(config *MasterConfig, coreLogger coreLogging.Logger, ma
 	masterLogger.Infof("Created %d workers from configuration", len(workers))
 
 	// Create application context
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+	defer cancel()
+
+	stopped := make(chan struct{})
 
 	// Add all workers to master (registration phase)
 	for _, worker := range workers {
@@ -74,7 +77,7 @@ func RunWithConfigStruct(config *MasterConfig, coreLogger coreLogging.Logger, ma
 	// Start master in background (master.Run blocks until shutdown)
 	masterLogger.Infof("Starting master server...")
 	go func() {
-		master.Run(ctx)
+		master.RunWithStopped(ctx, stopped)
 	}()
 
 	// Wait for master to be running before starting workers
@@ -101,9 +104,15 @@ func RunWithConfigStruct(config *MasterConfig, coreLogger coreLogging.Logger, ma
 
 	masterLogger.Infof("All workers started, master is fully operational")
 
-	// Block forever until process is terminated
-	// master.Run() is running in the background and will handle shutdown
-	select {}
+	// Wait for graceful shutdown or timeout
+	select {
+	case <-stopped:
+		masterLogger.Infof("Master runner stopped gracefully")
+	case <-ctx.Done():
+		masterLogger.Infof("Shutdown timed out, forcing master runner to stop")
+	}
+
+	return nil
 }
 
 // RunWithConfigAndCustomLogger runs master with configuration and custom logger setup
