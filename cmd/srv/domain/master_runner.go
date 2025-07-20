@@ -37,6 +37,8 @@ func RunWithConfigStruct(config *MasterConfig, coreLogger coreLogging.Logger, ma
 		return NewValidationError("configuration cannot be nil", nil)
 	}
 
+	masterLogger.Infof("Master runner starting...")
+
 	// Create master options from config
 	masterOptions := MasterOptions{
 		Port: config.Master.Port,
@@ -57,10 +59,17 @@ func RunWithConfigStruct(config *MasterConfig, coreLogger coreLogging.Logger, ma
 	masterLogger.Infof("Created %d workers from configuration", len(workers))
 
 	// Create application context
-	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
-	defer cancel()
+	ctx := context.Background()
 
+	// Create a channel to signal when the master has stopped
 	stopped := make(chan struct{})
+
+	// Create master run options
+	masterRunOptions := RunOptions{
+		Context:               ctx,
+		ForcedShutdownTimeout: config.Master.ForceShutdownTimeout,
+		Stopped:               stopped,
+	}
 
 	// Add all workers to master (registration phase)
 	for _, worker := range workers {
@@ -77,7 +86,7 @@ func RunWithConfigStruct(config *MasterConfig, coreLogger coreLogging.Logger, ma
 	// Start master in background (master.Run blocks until shutdown)
 	masterLogger.Infof("Starting master server...")
 	go func() {
-		master.RunWithStopped(ctx, stopped)
+		master.RunWithOptions(masterRunOptions)
 	}()
 
 	// Wait for master to be running before starting workers
@@ -104,13 +113,10 @@ func RunWithConfigStruct(config *MasterConfig, coreLogger coreLogging.Logger, ma
 
 	masterLogger.Infof("All workers started, master is fully operational")
 
-	// Wait for graceful shutdown or timeout
-	select {
-	case <-stopped:
-		masterLogger.Infof("Master runner stopped gracefully")
-	case <-ctx.Done():
-		masterLogger.Infof("Shutdown timed out, forcing master runner to stop")
-	}
+	// Wait for stop signal
+	<-stopped
+
+	masterLogger.Infof("Master runner stopped")
 
 	return nil
 }

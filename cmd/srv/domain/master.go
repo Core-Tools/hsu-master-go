@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	coreControl "github.com/core-tools/hsu-core/pkg/control"
 	coreDomain "github.com/core-tools/hsu-core/pkg/domain"
@@ -335,13 +336,46 @@ func (m *Master) StopWorker(ctx context.Context, id string) error {
 	return nil
 }
 
+const DefaultForcedShutdownTimeout = 25 * time.Second
+
 func (m *Master) Run(ctx context.Context) {
 	stopped := make(chan struct{})
-	m.RunWithStopped(ctx, stopped)
+	m.RunWithOptions(RunOptions{
+		Context:               ctx,
+		ForcedShutdownTimeout: DefaultForcedShutdownTimeout,
+		Stopped:               stopped,
+	})
 }
 
-func (m *Master) RunWithStopped(ctx context.Context, stopped chan struct{}) {
+type RunOptions struct {
+	Context               context.Context
+	ForcedShutdownTimeout time.Duration
+	Stopped               chan struct{}
+}
+
+func (m *Master) RunWithOptions(options RunOptions) {
 	m.logger.Infof("Starting master...")
+
+	var ctx context.Context
+	if options.Context == nil {
+		ctx = context.Background()
+	} else {
+		ctx = options.Context
+	}
+
+	var stopped chan struct{}
+	if options.Stopped == nil {
+		stopped = make(chan struct{})
+	} else {
+		stopped = options.Stopped
+	}
+
+	var forcedShutdownTimeout time.Duration
+	if options.ForcedShutdownTimeout == 0 {
+		forcedShutdownTimeout = DefaultForcedShutdownTimeout
+	} else {
+		forcedShutdownTimeout = options.ForcedShutdownTimeout
+	}
 
 	// Transition master to running state
 	m.setMasterState(MasterStateRunning)
@@ -349,7 +383,12 @@ func (m *Master) RunWithStopped(ctx context.Context, stopped chan struct{}) {
 	m.logger.Infof("Master started successfully, ready to manage workers")
 
 	// Start the server (blocks until shutdown)
-	m.server.RunWithContextAndStopped(ctx, stopped, func() {
+	coreServerRunOptions := coreControl.RunOptions{
+		Context:               ctx,
+		ForcedShutdownTimeout: forcedShutdownTimeout,
+		Stopped:               stopped,
+	}
+	m.server.RunWithOptions(coreServerRunOptions, func() {
 		m.logger.Infof("Shutting down master...")
 
 		// Transition to stopping state

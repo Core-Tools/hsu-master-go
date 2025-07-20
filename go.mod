@@ -2,12 +2,12 @@ module github.com/core-tools/hsu-master-go
 
 go 1.22.3
 
-replace github.com/core-tools/hsu-core => github.com/core-tools/hsu-core/go v0.0.0-20250720161309-36b455e92188
+replace github.com/core-tools/hsu-core => github.com/core-tools/hsu-core/go v0.0.0-20250720170041-9937b0bb0529
 
 replace github.com/core-tools/hsu-master => .
 
 require (
-	github.com/core-tools/hsu-core v0.0.0-20250720161309-36b455e92188
+	github.com/core-tools/hsu-core v0.0.0-20250720170041-9937b0bb0529
 	github.com/core-tools/hsu-master v0.0.0-00010101000000-000000000000
 	github.com/jessevdk/go-flags v1.6.1
 	github.com/stretchr/testify v1.10.0

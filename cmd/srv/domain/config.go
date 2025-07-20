@@ -17,8 +17,9 @@ type MasterConfig struct {
 
 // MasterConfigOptions represents master-level configuration
 type MasterConfigOptions struct {
-	Port     int    `yaml:"port"`
-	LogLevel string `yaml:"log_level,omitempty"`
+	Port                 int           `yaml:"port"`
+	LogLevel             string        `yaml:"log_level,omitempty"`
+	ForceShutdownTimeout time.Duration `yaml:"force_shutdown_timeout,omitempty"`
 }
 
 // WorkerConfig represents a single worker configuration
