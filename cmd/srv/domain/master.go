@@ -151,12 +151,30 @@ func (m *Master) RemoveWorker(id string) error {
 
 	m.logger.Infof("Removing worker, id: %s", id)
 
+	// Get worker and check if it's safely removable
+	workerEntry, _, exists := m.getWorkerAndMasterState(id)
+	if !exists {
+		return NewNotFoundError("worker not found", nil).WithContext("worker_id", id)
+	}
+
+	// Check if worker is in a safe state for removal
+	currentState := workerEntry.StateMachine.GetCurrentState()
+	if !isWorkerSafelyRemovable(currentState) {
+		return NewValidationError(
+			fmt.Sprintf("cannot remove worker in state '%s': worker must be stopped before removal", currentState),
+			nil,
+		).WithContext("worker_id", id).
+			WithContext("current_state", string(currentState)).
+			WithContext("required_states", "stopped, failed").
+			WithContext("suggested_action", "call StopWorker first")
+	}
+
+	// Safe to remove - acquire lock and remove
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
-	// Check if worker exists
-	_, exists := m.workers[id]
-	if !exists {
+	// Double-check existence under lock (could have been removed by another goroutine)
+	if _, exists := m.workers[id]; !exists {
 		return NewNotFoundError("worker not found", nil).WithContext("worker_id", id)
 	}
 
@@ -165,6 +183,20 @@ func (m *Master) RemoveWorker(id string) error {
 
 	m.logger.Infof("Worker removed successfully, id: %s", id)
 	return nil
+}
+
+// isWorkerSafelyRemovable checks if a worker is in a state safe for removal
+func isWorkerSafelyRemovable(state WorkerState) bool {
+	switch state {
+	case WorkerStateStopped, WorkerStateFailed:
+		return true // Safe to remove - process is not running
+	case WorkerStateUnknown, WorkerStateRegistered:
+		return true // Safe to remove - no process started yet
+	case WorkerStateStarting, WorkerStateRunning, WorkerStateStopping, WorkerStateRestarting:
+		return false // Unsafe - process may be running
+	default:
+		return false // Unknown state - be conservative
+	}
 }
 
 func (m *Master) StartWorker(ctx context.Context, id string) error {
@@ -178,11 +210,8 @@ func (m *Master) StartWorker(ctx context.Context, id string) error {
 		return NewValidationError("invalid worker ID", err).WithContext("worker_id", id)
 	}
 
-	// Check if worker exists first (better error message than master state)
-	m.mutex.Lock()
-	workerEntry, exists := m.workers[id]
-	currentMasterState := m.masterState
-	m.mutex.Unlock()
+	// Get worker and master state safely
+	workerEntry, currentMasterState, exists := m.getWorkerAndMasterState(id)
 
 	if !exists {
 		return NewNotFoundError("worker not found", nil).WithContext("worker_id", id)
@@ -249,11 +278,8 @@ func (m *Master) StopWorker(ctx context.Context, id string) error {
 		return NewValidationError("invalid worker ID", err).WithContext("worker_id", id)
 	}
 
-	// Check if worker exists first (better error message than master state)
-	m.mutex.Lock()
-	workerEntry, exists := m.workers[id]
-	currentMasterState := m.masterState
-	m.mutex.Unlock()
+	// Get worker and master state safely
+	workerEntry, currentMasterState, exists := m.getWorkerAndMasterState(id)
 
 	if !exists {
 		return NewNotFoundError("worker not found", nil).WithContext("worker_id", id)
@@ -313,9 +339,7 @@ func (m *Master) Run(ctx context.Context) {
 	m.logger.Infof("Starting master...")
 
 	// Transition master to running state
-	m.mutex.Lock()
-	m.masterState = MasterStateRunning
-	m.mutex.Unlock()
+	m.setMasterState(MasterStateRunning)
 
 	m.logger.Infof("Master started successfully, ready to manage workers")
 
@@ -324,20 +348,82 @@ func (m *Master) Run(ctx context.Context) {
 		m.logger.Infof("Shutting down master...")
 
 		// Transition to stopping state
-		m.mutex.Lock()
-		m.masterState = MasterStateStopping
-		m.mutex.Unlock()
+		m.setMasterState(MasterStateStopping)
 
 		// Shutdown workers
 		m.stopProcessControls(ctx)
 
 		// Transition to stopped state
-		m.mutex.Lock()
-		m.masterState = MasterStateStopped
-		m.mutex.Unlock()
+		m.setMasterState(MasterStateStopped)
 
 		m.logger.Infof("Master shutdown complete")
 	})
+}
+
+// GetAllWorkerStates returns state information for all workers
+func (m *Master) GetAllWorkerStates() map[string]WorkerStateInfo {
+	workerEntriesCopy := m.getAllWorkers()
+
+	result := make(map[string]WorkerStateInfo)
+	for id, workerEntry := range workerEntriesCopy {
+		result[id] = workerEntry.StateMachine.GetStateInfo()
+	}
+	return result
+}
+
+// GetWorkerState returns the current state of a worker
+func (m *Master) GetWorkerState(id string) (WorkerState, error) {
+	// Validate worker ID
+	if err := ValidateWorkerID(id); err != nil {
+		return WorkerStateUnknown, NewValidationError("invalid worker ID", err).WithContext("worker_id", id)
+	}
+
+	workerEntry, _, exists := m.getWorkerAndMasterState(id)
+
+	if !exists {
+		return WorkerStateUnknown, NewNotFoundError("worker not found", nil).WithContext("worker_id", id)
+	}
+
+	return workerEntry.StateMachine.GetCurrentState(), nil
+}
+
+// GetWorkerStateInfo returns comprehensive state information for a worker
+func (m *Master) GetWorkerStateInfo(id string) (WorkerStateInfo, error) {
+	// Validate worker ID
+	if err := ValidateWorkerID(id); err != nil {
+		return WorkerStateInfo{}, NewValidationError("invalid worker ID", err).WithContext("worker_id", id)
+	}
+
+	workerEntry, _, exists := m.getWorkerAndMasterState(id)
+
+	if !exists {
+		return WorkerStateInfo{}, NewNotFoundError("worker not found", nil).WithContext("worker_id", id)
+	}
+
+	return workerEntry.StateMachine.GetStateInfo(), nil
+}
+
+// IsWorkerOperationAllowed checks if an operation is allowed for a worker
+func (m *Master) IsWorkerOperationAllowed(id string, operation string) (bool, error) {
+	// Validate worker ID
+	if err := ValidateWorkerID(id); err != nil {
+		return false, NewValidationError("invalid worker ID", err).WithContext("worker_id", id)
+	}
+
+	workerEntry, _, exists := m.getWorkerAndMasterState(id)
+
+	if !exists {
+		return false, NewNotFoundError("worker not found", nil).WithContext("worker_id", id)
+	}
+
+	return workerEntry.StateMachine.IsOperationAllowed(operation), nil
+}
+
+// GetMasterState returns the current state of the master
+func (m *Master) GetMasterState() MasterState {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	return m.masterState
 }
 
 func (m *Master) stopProcessControls(ctx context.Context) {
@@ -365,30 +451,6 @@ func (m *Master) stopProcessControls(ctx context.Context) {
 	m.logger.Infof("Process controls stopped.")
 }
 
-// getControl returns a single process control under lock
-func (m *Master) getControl(id string) (ProcessControl, bool) {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
-
-	workerEntry, exists := m.workers[id]
-	if !exists {
-		return nil, false
-	}
-	return workerEntry.ProcessControl, true
-}
-
-// getAllControls returns a copy of all process controls under lock
-func (m *Master) getAllControls() map[string]ProcessControl {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
-
-	controlsCopy := make(map[string]ProcessControl)
-	for id, workerEntry := range m.workers {
-		controlsCopy[id] = workerEntry.ProcessControl
-	}
-	return controlsCopy
-}
-
 // getAllWorkers returns a copy of all worker entries under lock
 func (m *Master) getAllWorkers() map[string]*WorkerEntry {
 	m.mutex.Lock()
@@ -401,79 +463,19 @@ func (m *Master) getAllWorkers() map[string]*WorkerEntry {
 	return workerEntriesCopy
 }
 
-// GetWorkerState returns the current state of a worker
-func (m *Master) GetWorkerState(id string) (WorkerState, error) {
-	// Validate worker ID
-	if err := ValidateWorkerID(id); err != nil {
-		return WorkerStateUnknown, NewValidationError("invalid worker ID", err).WithContext("worker_id", id)
-	}
-
-	m.mutex.Lock()
-	workerEntry, exists := m.workers[id]
-	m.mutex.Unlock()
-
-	if !exists {
-		return WorkerStateUnknown, NewNotFoundError("worker not found", nil).WithContext("worker_id", id)
-	}
-
-	return workerEntry.StateMachine.GetCurrentState(), nil
-}
-
-// GetWorkerStateInfo returns comprehensive state information for a worker
-func (m *Master) GetWorkerStateInfo(id string) (WorkerStateInfo, error) {
-	// Validate worker ID
-	if err := ValidateWorkerID(id); err != nil {
-		return WorkerStateInfo{}, NewValidationError("invalid worker ID", err).WithContext("worker_id", id)
-	}
-
-	m.mutex.Lock()
-	workerEntry, exists := m.workers[id]
-	m.mutex.Unlock()
-
-	if !exists {
-		return WorkerStateInfo{}, NewNotFoundError("worker not found", nil).WithContext("worker_id", id)
-	}
-
-	return workerEntry.StateMachine.GetStateInfo(), nil
-}
-
-// GetAllWorkerStates returns state information for all workers
-func (m *Master) GetAllWorkerStates() map[string]WorkerStateInfo {
-	m.mutex.Lock()
-	workerEntriesCopy := make(map[string]*WorkerEntry)
-	for id, workerEntry := range m.workers {
-		workerEntriesCopy[id] = workerEntry
-	}
-	m.mutex.Unlock()
-
-	result := make(map[string]WorkerStateInfo)
-	for id, workerEntry := range workerEntriesCopy {
-		result[id] = workerEntry.StateMachine.GetStateInfo()
-	}
-	return result
-}
-
-// IsWorkerOperationAllowed checks if an operation is allowed for a worker
-func (m *Master) IsWorkerOperationAllowed(id string, operation string) (bool, error) {
-	// Validate worker ID
-	if err := ValidateWorkerID(id); err != nil {
-		return false, NewValidationError("invalid worker ID", err).WithContext("worker_id", id)
-	}
-
-	m.mutex.Lock()
-	workerEntry, exists := m.workers[id]
-	m.mutex.Unlock()
-
-	if !exists {
-		return false, NewNotFoundError("worker not found", nil).WithContext("worker_id", id)
-	}
-
-	return workerEntry.StateMachine.IsOperationAllowed(operation), nil
-}
-
-// GetMasterState returns the current state of the master
-func (m *Master) GetMasterState() MasterState {
+// getWorkerAndMasterState returns worker entry and master state under lock
+// Returns: workerEntry, masterState, exists
+func (m *Master) getWorkerAndMasterState(id string) (*WorkerEntry, MasterState, bool) {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
-	return m.masterState
+
+	workerEntry, exists := m.workers[id]
+	return workerEntry, m.masterState, exists
+}
+
+// setMasterState sets the master state and releases the lock
+func (m *Master) setMasterState(state MasterState) {
+	m.mutex.Lock()
+	m.masterState = state
+	m.mutex.Unlock()
 }

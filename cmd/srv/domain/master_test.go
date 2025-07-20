@@ -159,25 +159,20 @@ func TestMaster_AddWorker(t *testing.T) {
 }
 
 func TestMaster_RemoveWorker(t *testing.T) {
-	t.Run("existing_worker", func(t *testing.T) {
+	t.Run("valid_removal", func(t *testing.T) {
 		master := createTestMaster(t)
-		worker := createTestWorker("test-worker-1")
 
-		// Add worker first
+		// Add a worker
+		worker := createTestWorker("test-worker-1")
 		err := master.AddWorker(worker)
 		require.NoError(t, err)
 
-		// Remove worker
+		// Worker should be in 'registered' state, which is safe to remove
 		err = master.RemoveWorker("test-worker-1")
-
 		assert.NoError(t, err)
-		assert.Equal(t, 0, len(master.workers))
-	})
 
-	t.Run("nonexistent_worker", func(t *testing.T) {
-		master := createTestMaster(t)
-		err := master.RemoveWorker("nonexistent-worker")
-
+		// Verify worker is removed
+		_, err = master.GetWorkerState("test-worker-1")
 		assert.Error(t, err)
 		assert.True(t, IsNotFoundError(err))
 	})
@@ -189,6 +184,126 @@ func TestMaster_RemoveWorker(t *testing.T) {
 		assert.Error(t, err)
 		assert.True(t, IsValidationError(err))
 	})
+
+	t.Run("nonexistent_worker", func(t *testing.T) {
+		master := createTestMaster(t)
+		err := master.RemoveWorker("nonexistent-worker")
+
+		assert.Error(t, err)
+		assert.True(t, IsNotFoundError(err))
+	})
+
+	t.Run("cannot_remove_running_worker", func(t *testing.T) {
+		master := createTestMaster(t)
+
+		// Add a worker
+		worker := createTestWorker("running-worker")
+		err := master.AddWorker(worker)
+		require.NoError(t, err)
+
+		// Manually transition to running state using proper sequence
+		workerEntry, _, exists := master.getWorkerAndMasterState("running-worker")
+		require.True(t, exists)
+		// registered -> starting -> running
+		err = workerEntry.StateMachine.Transition(WorkerStateStarting, "start", nil)
+		require.NoError(t, err)
+		err = workerEntry.StateMachine.Transition(WorkerStateRunning, "start", nil)
+		require.NoError(t, err)
+
+		// Should not be able to remove running worker
+		err = master.RemoveWorker("running-worker")
+		assert.Error(t, err)
+		assert.True(t, IsValidationError(err))
+		assert.Contains(t, err.Error(), "cannot remove worker in state 'running'")
+		assert.Contains(t, err.Error(), "worker must be stopped before removal")
+
+		// Worker should still exist
+		state, err := master.GetWorkerState("running-worker")
+		assert.NoError(t, err)
+		assert.Equal(t, WorkerStateRunning, state)
+	})
+
+	t.Run("can_remove_stopped_worker", func(t *testing.T) {
+		master := createTestMaster(t)
+
+		// Add a worker
+		worker := createTestWorker("stopped-worker")
+		err := master.AddWorker(worker)
+		require.NoError(t, err)
+
+		// Manually transition to stopped state using proper sequence
+		workerEntry, _, exists := master.getWorkerAndMasterState("stopped-worker")
+		require.True(t, exists)
+		// registered -> starting -> running -> stopping -> stopped
+		err = workerEntry.StateMachine.Transition(WorkerStateStarting, "start", nil)
+		require.NoError(t, err)
+		err = workerEntry.StateMachine.Transition(WorkerStateRunning, "start", nil)
+		require.NoError(t, err)
+		err = workerEntry.StateMachine.Transition(WorkerStateStopping, "stop", nil)
+		require.NoError(t, err)
+		err = workerEntry.StateMachine.Transition(WorkerStateStopped, "stop", nil)
+		require.NoError(t, err)
+
+		// Should be able to remove stopped worker
+		err = master.RemoveWorker("stopped-worker")
+		assert.NoError(t, err)
+
+		// Worker should be removed
+		_, err = master.GetWorkerState("stopped-worker")
+		assert.Error(t, err)
+		assert.True(t, IsNotFoundError(err))
+	})
+
+	t.Run("can_remove_failed_worker", func(t *testing.T) {
+		master := createTestMaster(t)
+
+		// Add a worker
+		worker := createTestWorker("failed-worker")
+		err := master.AddWorker(worker)
+		require.NoError(t, err)
+
+		// Manually transition to failed state using proper sequence
+		workerEntry, _, exists := master.getWorkerAndMasterState("failed-worker")
+		require.True(t, exists)
+		// registered -> starting -> failed (start operation failed)
+		err = workerEntry.StateMachine.Transition(WorkerStateStarting, "start", nil)
+		require.NoError(t, err)
+		err = workerEntry.StateMachine.Transition(WorkerStateFailed, "start", fmt.Errorf("test failure"))
+		require.NoError(t, err)
+
+		// Should be able to remove failed worker
+		err = master.RemoveWorker("failed-worker")
+		assert.NoError(t, err)
+
+		// Worker should be removed
+		_, err = master.GetWorkerState("failed-worker")
+		assert.Error(t, err)
+		assert.True(t, IsNotFoundError(err))
+	})
+}
+
+func TestIsWorkerSafelyRemovable(t *testing.T) {
+	tests := []struct {
+		state    WorkerState
+		expected bool
+		reason   string
+	}{
+		{WorkerStateUnknown, true, "unknown state should be safe"},
+		{WorkerStateRegistered, true, "registered workers have no process"},
+		{WorkerStateStarting, false, "starting workers may have process"},
+		{WorkerStateRunning, false, "running workers have active process"},
+		{WorkerStateStopping, false, "stopping workers still have process"},
+		{WorkerStateStopped, true, "stopped workers have no process"},
+		{WorkerStateFailed, true, "failed workers have no process"},
+		{WorkerStateRestarting, false, "restarting workers may have process"},
+	}
+
+	for _, tt := range tests {
+		t.Run(string(tt.state), func(t *testing.T) {
+			result := isWorkerSafelyRemovable(tt.state)
+			assert.Equal(t, tt.expected, result, tt.reason)
+		})
+	}
 }
 
 func TestMaster_StartWorker(t *testing.T) {
@@ -245,53 +360,6 @@ func TestMaster_StopWorker(t *testing.T) {
 		assert.Error(t, err)
 		assert.True(t, IsNotFoundError(err))
 	})
-}
-
-func TestMaster_GetControl(t *testing.T) {
-	master := createTestMaster(t)
-
-	// Add a worker
-	worker := createTestWorker("test-worker-1")
-	err := master.AddWorker(worker)
-	require.NoError(t, err)
-
-	// Test getControl
-	control, exists := master.getControl("test-worker-1")
-	assert.True(t, exists)
-	assert.NotNil(t, control)
-
-	// Test nonexistent worker
-	control, exists = master.getControl("nonexistent-worker")
-	assert.False(t, exists)
-	assert.Nil(t, control)
-}
-
-func TestMaster_GetAllControls(t *testing.T) {
-	master := createTestMaster(t)
-
-	// Initially empty
-	controls := master.getAllControls()
-	assert.Equal(t, 0, len(controls))
-
-	// Add some workers
-	worker1 := createTestWorker("worker-1")
-	worker2 := createTestWorker("worker-2")
-
-	err := master.AddWorker(worker1)
-	require.NoError(t, err)
-	err = master.AddWorker(worker2)
-	require.NoError(t, err)
-
-	// Get all controls
-	controls = master.getAllControls()
-	assert.Equal(t, 2, len(controls))
-	assert.Contains(t, controls, "worker-1")
-	assert.Contains(t, controls, "worker-2")
-
-	// Verify it's a copy (modifications don't affect original)
-	delete(controls, "worker-1")
-	originalControls := master.getAllControls()
-	assert.Equal(t, 2, len(originalControls))
 }
 
 func TestMaster_ConcurrentOperations(t *testing.T) {
