@@ -120,7 +120,7 @@ type DiscoveryConfig struct {
 }
 
 type ProcessControl interface {
-	Process() (*os.Process, *os.ProcessState)
+	Process() *os.Process // Simplified to only return process
 	HealthMonitor() HealthMonitor
 	Stdout() io.ReadCloser
 	Start(ctx context.Context) error
@@ -160,7 +160,6 @@ type ProcessControlOptions struct {
 type processControl struct {
 	config        ProcessControlOptions
 	process       *os.Process
-	state         *os.ProcessState
 	stdout        io.ReadCloser
 	healthMonitor HealthMonitor
 	logger        logging.Logger
@@ -175,8 +174,8 @@ func NewProcessControl(config ProcessControlOptions, workerID string, logger log
 	}
 }
 
-func (pc *processControl) Process() (*os.Process, *os.ProcessState) {
-	return pc.process, pc.state
+func (pc *processControl) Process() *os.Process {
+	return pc.process // Simplified to only return process
 }
 
 func (pc *processControl) HealthMonitor() HealthMonitor {
@@ -197,7 +196,6 @@ func (pc *processControl) Start(ctx context.Context) error {
 		pc.workerID, pc.config.CanAttach, (pc.config.ExecuteCmd != nil), pc.config.CanTerminate)
 
 	var process *os.Process
-	var state *os.ProcessState
 	var stdout io.ReadCloser
 	var err error
 
@@ -209,7 +207,7 @@ func (pc *processControl) Start(ctx context.Context) error {
 	if pc.config.CanAttach && attachCmd != nil {
 		pc.logger.Infof("Attempting to attach to existing process, worker: %s, discovery: %s", pc.workerID, pc.config.Discovery.Method)
 
-		process, state, stdout, healthCheckConfig, err = attachCmd(pc.config.Discovery)
+		process, stdout, healthCheckConfig, err = attachCmd(pc.config.Discovery) // Updated signature
 		if err == nil {
 			pc.logger.Infof("Successfully attached to existing process, worker: %s, PID: %d", pc.workerID, process.Pid)
 			executeCmd = nil // attached successfully, no need to execute cmd
@@ -227,7 +225,7 @@ func (pc *processControl) Start(ctx context.Context) error {
 			return NewProcessError("failed to start process", err)
 		}
 
-		process, state = cmd.Process, cmd.ProcessState
+		process = cmd.Process // Simplified assignment
 		pc.logger.Infof("New process started successfully, worker: %s, PID: %d", pc.workerID, process.Pid)
 	}
 
@@ -245,17 +243,51 @@ func (pc *processControl) Start(ctx context.Context) error {
 		return NewInternalError("no process available after startup", nil)
 	}
 
-	pc.logger.Infof("Process control started, process: %+v, state: %+v, stdout: %+v", process, state, stdout)
+	pc.logger.Infof("Process control started, process: %+v, stdout: %+v", process, stdout) // Removed state logging
 
 	pc.process = process
-	pc.state = state
 	pc.stdout = stdout
 
 	var healthMonitor HealthMonitor
 	if healthCheckConfig != nil {
 		pc.logger.Infof("Starting health monitor for worker %s, config: %+v", pc.workerID, healthCheckConfig)
 
-		healthMonitor = NewHealthMonitor(healthCheckConfig, pc.logger, pc.workerID)
+		// Create process info for health monitoring - simplified
+		processInfo := &ProcessInfo{
+			PID: process.Pid, // Only PID needed
+		}
+
+		// Create health monitor with appropriate capabilities
+		if healthCheckConfig.Type == HealthCheckTypeProcess {
+			if pc.config.Restart != nil && pc.config.CanRestart {
+				// Create health monitor with restart capability
+				healthMonitor = NewHealthMonitorWithRestart(healthCheckConfig, pc.logger, pc.workerID, processInfo, pc.config.Restart)
+			} else {
+				// Create health monitor with process info but no restart
+				healthMonitor = NewHealthMonitorWithProcessInfo(healthCheckConfig, pc.logger, pc.workerID, processInfo)
+			}
+		} else {
+			// For other health check types, create standard monitor
+			healthMonitor = NewHealthMonitor(healthCheckConfig, pc.logger, pc.workerID)
+		}
+
+		// Set up restart callback if restart is enabled
+		if pc.config.Restart != nil && pc.config.CanRestart {
+			healthMonitor.SetRestartCallback(func(reason string) error {
+				pc.logger.Warnf("Health monitor requesting restart, worker: %s, reason: %s", pc.workerID, reason)
+
+				// Use a background context for restart since this is triggered by health failure
+				ctx := context.Background()
+				if err := pc.Restart(ctx); err != nil {
+					pc.logger.Errorf("Failed to restart process, worker: %s, error: %v", pc.workerID, err)
+					return err
+				}
+
+				pc.logger.Infof("Process restart completed, worker: %s", pc.workerID)
+				return nil
+			})
+		}
+
 		healthMonitor.Start()
 	}
 	pc.healthMonitor = healthMonitor
@@ -299,7 +331,6 @@ func (pc *processControl) Stop(ctx context.Context) error {
 
 	// 4. Clean up process references
 	pc.process = nil
-	pc.state = nil
 
 	pc.logger.Infof("Process control stopped successfully")
 	return nil

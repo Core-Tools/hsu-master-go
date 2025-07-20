@@ -10,17 +10,17 @@ import (
 )
 
 // AttachCmd represents a command that attaches to an existing process
-type AttachCmd func(config DiscoveryConfig) (*os.Process, *os.ProcessState, io.ReadCloser, *HealthCheckConfig, error)
+type AttachCmd func(config DiscoveryConfig) (*os.Process, io.ReadCloser, *HealthCheckConfig, error)
 
 // NewStdAttachCmd creates a standard attachment command function with logging
 func NewStdAttachCmd(healthCheckConfig *HealthCheckConfig, logger logging.Logger, workerID string) AttachCmd {
-	return func(config DiscoveryConfig) (*os.Process, *os.ProcessState, io.ReadCloser, *HealthCheckConfig, error) {
+	return func(config DiscoveryConfig) (*os.Process, io.ReadCloser, *HealthCheckConfig, error) {
 		logger.Infof("Executing standard attach command, worker: %s, discovery: %s, config: %+v", workerID, config.Method, config)
 
 		// Validate discovery configuration
 		if err := ValidateDiscoveryConfig(config); err != nil {
 			logger.Errorf("Discovery configuration validation failed, worker: %s, error: %v", workerID, err)
-			return nil, nil, nil, nil, NewValidationError("invalid discovery configuration", err)
+			return nil, nil, nil, NewValidationError("invalid discovery configuration", err)
 		}
 
 		var process *os.Process
@@ -43,12 +43,12 @@ func NewStdAttachCmd(healthCheckConfig *HealthCheckConfig, logger logging.Logger
 			process, err = openProcessByServiceName(config.ServiceName)
 		default:
 			logger.Errorf("Unsupported discovery method, worker: %s, method: %s", workerID, config.Method)
-			return nil, nil, nil, nil, NewValidationError("unsupported discovery method: "+string(config.Method), nil)
+			return nil, nil, nil, NewValidationError("unsupported discovery method: "+string(config.Method), nil)
 		}
 
 		if err != nil {
 			logger.Errorf("Failed to discover process, worker: %s, method: %s, error: %v", workerID, config.Method, err)
-			return nil, nil, nil, nil, NewDiscoveryError("failed to discover process", err).WithContext("discovery_method", string(config.Method))
+			return nil, nil, nil, NewDiscoveryError("failed to discover process", err).WithContext("discovery_method", string(config.Method))
 		}
 
 		logger.Infof("Successfully attached to process, worker: %s, PID: %d, discovery: %s", workerID, process.Pid, config.Method)
@@ -57,7 +57,7 @@ func NewStdAttachCmd(healthCheckConfig *HealthCheckConfig, logger logging.Logger
 		// - ProcessState is nil (we haven't waited on the process)
 		// - stdout is nil (we can't access stdout of existing processes)
 		// - HealthCheckConfig comes from the caller (worker-specific)
-		return process, nil, nil, healthCheckConfig, nil
+		return process, nil, healthCheckConfig, nil
 	}
 }
 

@@ -70,14 +70,14 @@ func (w *integratedWorker) ProcessControlOptions() ProcessControlOptions {
 }
 
 // AttachCmd creates a dynamic gRPC health check configuration by reading the port file
-func (w *integratedWorker) AttachCmd(config DiscoveryConfig) (*os.Process, *os.ProcessState, io.ReadCloser, *HealthCheckConfig, error) {
+func (w *integratedWorker) AttachCmd(config DiscoveryConfig) (*os.Process, io.ReadCloser, *HealthCheckConfig, error) {
 	w.logger.Infof("Executing integrated worker attach command, id: %s, config: %+v", w.id, config)
 
 	// Use standard attachment to discover the process
 	stdAttachCmd := NewStdAttachCmd(nil, w.logger, w.id) // No health check config yet, but include logging
-	process, state, stdout, _, err := stdAttachCmd(config)
+	process, stdout, _, err := stdAttachCmd(config)      // Updated to match new signature
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	// Read the port from the port file
@@ -102,7 +102,7 @@ func (w *integratedWorker) AttachCmd(config DiscoveryConfig) (*os.Process, *os.P
 
 	w.logger.Infof("Created dynamic gRPC health check for attached process %d: %s", process.Pid, healthCheckConfig.GRPC.Address)
 
-	return process, state, stdout, healthCheckConfig, nil
+	return process, stdout, healthCheckConfig, nil
 }
 
 func (w *integratedWorker) ExecuteCmd(ctx context.Context) (*exec.Cmd, io.ReadCloser, *HealthCheckConfig, error) {

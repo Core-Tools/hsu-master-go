@@ -1,6 +1,13 @@
 package domain
 
 import (
+	"context"
+	"fmt"
+	"net"
+	"net/http"
+	"os"
+	"os/exec"
+	"strings"
 	"sync"
 	"time"
 
@@ -85,20 +92,32 @@ type HealthCheckState struct {
 	Retries              int
 }
 
+// HealthRestartCallback defines a callback function for triggering restarts on health failures
+type HealthRestartCallback func(reason string) error
+
 type HealthMonitor interface {
 	State() *HealthCheckState
 	Start()
 	Stop()
+	SetRestartCallback(callback HealthRestartCallback) // Add restart callback
 }
 
 type healthMonitor struct {
-	config   *HealthCheckConfig
-	state    *HealthCheckState
-	stopChan chan struct{}
-	wg       sync.WaitGroup
-	mutex    sync.Mutex
-	logger   logging.Logger
-	workerID string
+	config          *HealthCheckConfig
+	state           *HealthCheckState
+	stopChan        chan struct{}
+	wg              sync.WaitGroup
+	mutex           sync.Mutex
+	logger          logging.Logger
+	workerID        string
+	processInfo     *ProcessInfo          // Add process information for health checking
+	restartCallback HealthRestartCallback // Callback for triggering restarts
+	restartPolicy   *RestartConfig        // Restart policy configuration
+}
+
+// ProcessInfo holds process information needed for health monitoring
+type ProcessInfo struct {
+	PID int // Only PID is needed for process health checking
 }
 
 func NewHealthMonitor(config *HealthCheckConfig, logger logging.Logger, workerID string) HealthMonitor {
@@ -108,6 +127,31 @@ func NewHealthMonitor(config *HealthCheckConfig, logger logging.Logger, workerID
 		stopChan: make(chan struct{}),
 		logger:   logger,
 		workerID: workerID,
+	}
+}
+
+// NewHealthMonitorWithProcessInfo creates a health monitor with process information for process health checks
+func NewHealthMonitorWithProcessInfo(config *HealthCheckConfig, logger logging.Logger, workerID string, processInfo *ProcessInfo) HealthMonitor {
+	return &healthMonitor{
+		config:      config,
+		state:       &HealthCheckState{Status: HealthCheckStatusUnknown},
+		stopChan:    make(chan struct{}),
+		logger:      logger,
+		workerID:    workerID,
+		processInfo: processInfo,
+	}
+}
+
+// NewHealthMonitorWithRestart creates a health monitor with restart capability
+func NewHealthMonitorWithRestart(config *HealthCheckConfig, logger logging.Logger, workerID string, processInfo *ProcessInfo, restartPolicy *RestartConfig) HealthMonitor {
+	return &healthMonitor{
+		config:        config,
+		state:         &HealthCheckState{Status: HealthCheckStatusUnknown},
+		stopChan:      make(chan struct{}),
+		logger:        logger,
+		workerID:      workerID,
+		processInfo:   processInfo,
+		restartPolicy: restartPolicy,
 	}
 }
 
@@ -240,40 +284,227 @@ func (h *healthMonitor) updateState(isHealthy bool, message string) {
 			h.logger.Warnf("Health check failed, worker: %s, status: %s, consecutive_failures: %d, message: %s",
 				h.workerID, h.state.Status, h.state.ConsecutiveFailures, message)
 		}
+
+		// Check if we should trigger a restart
+		h.checkRestartCondition(message)
 	}
 
 	h.state.Message = message
 }
 
+// checkRestartCondition determines if a restart should be triggered based on health failures
+func (h *healthMonitor) checkRestartCondition(message string) {
+	// Only trigger restart if we have both restart policy and callback
+	if h.restartPolicy == nil || h.restartCallback == nil {
+		return
+	}
+
+	// Check restart policy
+	shouldRestart := false
+	switch h.restartPolicy.Policy {
+	case RestartAlways:
+		shouldRestart = true
+	case RestartOnFailure:
+		// Restart on health check failures if we've reached the threshold
+		shouldRestart = h.state.Status == HealthCheckStatusUnhealthy
+	case RestartUnlessStopped:
+		// Similar to always, but should check if process was intentionally stopped
+		shouldRestart = h.state.Status == HealthCheckStatusUnhealthy
+	case RestartNever:
+		shouldRestart = false
+	}
+
+	if !shouldRestart {
+		return
+	}
+
+	// Check if we've exceeded max retries
+	if h.restartPolicy.MaxRetries > 0 && h.state.Retries >= h.restartPolicy.MaxRetries {
+		h.logger.Errorf("Max restart retries exceeded, worker: %s, retries: %d, max: %d",
+			h.workerID, h.state.Retries, h.restartPolicy.MaxRetries)
+		return
+	}
+
+	// Trigger restart
+	h.state.Retries++
+	h.logger.Warnf("Triggering restart due to health check failure, worker: %s, retry: %d, reason: %s",
+		h.workerID, h.state.Retries, message)
+
+	// Call restart callback in a goroutine to avoid blocking health check loop
+	go func() {
+		if err := h.restartCallback(fmt.Sprintf("Health check failure: %s", message)); err != nil {
+			h.logger.Errorf("Failed to trigger restart, worker: %s, error: %v", h.workerID, err)
+		}
+	}()
+}
+
 func (h *healthMonitor) checkHTTP() (bool, string) {
 	h.logger.Debugf("Performing HTTP health check, worker: %s, url: %s", h.workerID, h.config.HTTP.URL)
-	// TODO: Implement HTTP health check
-	return false, "HTTP health check not implemented"
+
+	// Create HTTP client with timeout
+	client := &http.Client{
+		Timeout: h.config.RunOptions.Timeout,
+	}
+
+	method := h.config.HTTP.PMethod
+	if method == "" {
+		method = "GET"
+	}
+
+	req, err := http.NewRequest(method, h.config.HTTP.URL, nil)
+	if err != nil {
+		return false, fmt.Sprintf("Failed to create HTTP request: %v", err)
+	}
+
+	// Add custom headers
+	for key, value := range h.config.HTTP.Headers {
+		req.Header.Set(key, value)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return false, fmt.Sprintf("HTTP request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Consider 2xx status codes as healthy
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return true, fmt.Sprintf("HTTP health check passed: %d %s", resp.StatusCode, resp.Status)
+	}
+
+	return false, fmt.Sprintf("HTTP health check failed: %d %s", resp.StatusCode, resp.Status)
 }
 
 func (h *healthMonitor) checkGRPC() (bool, string) {
 	h.logger.Debugf("Performing gRPC health check, worker: %s, address: %s, service: %s",
 		h.workerID, h.config.GRPC.Address, h.config.GRPC.Service)
-	// TODO: Implement gRPC health check
-	return false, "gRPC health check not implemented"
+
+	// For now, implement as TCP connection check
+	// TODO: Implement proper gRPC health check protocol
+	address := h.config.GRPC.Address
+
+	// Parse address to get host and port
+	if !strings.Contains(address, ":") {
+		return false, "Invalid gRPC address format (missing port)"
+	}
+
+	conn, err := net.DialTimeout("tcp", address, h.config.RunOptions.Timeout)
+	if err != nil {
+		return false, fmt.Sprintf("gRPC connection failed: %v", err)
+	}
+	defer conn.Close()
+
+	return true, fmt.Sprintf("gRPC connection successful to %s", address)
 }
 
 func (h *healthMonitor) checkTCP() (bool, string) {
 	h.logger.Debugf("Performing TCP health check, worker: %s, address: %s, port: %d",
 		h.workerID, h.config.TCP.Address, h.config.TCP.Port)
-	// TODO: Implement TCP health check
-	return false, "TCP health check not implemented"
+
+	address := fmt.Sprintf("%s:%d", h.config.TCP.Address, h.config.TCP.Port)
+
+	conn, err := net.DialTimeout("tcp", address, h.config.RunOptions.Timeout)
+	if err != nil {
+		return false, fmt.Sprintf("TCP connection failed: %v", err)
+	}
+	defer conn.Close()
+
+	return true, fmt.Sprintf("TCP connection successful to %s", address)
 }
 
 func (h *healthMonitor) checkExec() (bool, string) {
 	h.logger.Debugf("Performing exec health check, worker: %s, command: %s, args: %v",
 		h.workerID, h.config.Exec.Command, h.config.Exec.Args)
-	// TODO: Implement exec health check
-	return false, "Exec health check not implemented"
+
+	// Create context with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), h.config.RunOptions.Timeout)
+	defer cancel()
+
+	// Create command
+	cmd := exec.CommandContext(ctx, h.config.Exec.Command, h.config.Exec.Args...)
+
+	// Execute command
+	output, err := cmd.CombinedOutput()
+
+	if ctx.Err() == context.DeadlineExceeded {
+		return false, fmt.Sprintf("Exec health check timed out after %v", h.config.RunOptions.Timeout)
+	}
+
+	if err != nil {
+		return false, fmt.Sprintf("Exec health check failed: %v, output: %s", err, string(output))
+	}
+
+	return true, fmt.Sprintf("Exec health check passed, output: %s", string(output))
 }
 
 func (h *healthMonitor) checkProcess() (bool, string) {
 	h.logger.Debugf("Performing process health check, worker: %s", h.workerID)
-	// TODO: Implement process health check
-	return false, "Process health check not implemented"
+
+	// If we have process info, use it for more accurate checking
+	if h.processInfo != nil {
+		return h.checkProcessWithInfo()
+	}
+
+	// Fallback: basic existence check using discovery
+	return h.checkProcessBasic()
+}
+
+func (h *healthMonitor) checkProcessWithInfo() (bool, string) {
+	pid := h.processInfo.PID
+
+	// Check if process exists using cross-platform approach
+	exists, err := isProcessRunning(pid)
+	if err != nil {
+		return false, fmt.Sprintf("Process check failed: PID %d, error: %v", pid, err)
+	}
+
+	if !exists {
+		return false, fmt.Sprintf("Process not running: PID %d", pid)
+	}
+
+	return true, fmt.Sprintf("Process is running: PID %d", pid)
+}
+
+// isProcessRunning checks if a process with the given PID is running (cross-platform)
+func isProcessRunning(pid int) (bool, error) {
+	if pid <= 0 {
+		return false, fmt.Errorf("invalid PID: %d", pid)
+	}
+
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		// On Unix, FindProcess always succeeds if PID > 0
+		// On Windows, FindProcess fails if process doesn't exist
+		return false, nil
+	}
+
+	// Use the existing platform-specific verification logic
+	if err := verifyProcessRunning(process); err != nil {
+		// Process doesn't exist or is not running
+		return false, nil
+	}
+
+	return true, nil
+}
+
+func (h *healthMonitor) checkProcessBasic() (bool, string) {
+	h.logger.Debugf("Basic process health check, worker: %s (no process info available)", h.workerID)
+
+	// Without process info, we can't do much more than assume healthy
+	// This should ideally not happen in production
+	h.logger.Warnf("Process health check has no process information, worker: %s", h.workerID)
+	return true, "Process health check: no process information available (assuming healthy)"
+}
+
+// SetProcessInfo allows updating process information after health monitor creation
+func (h *healthMonitor) SetProcessInfo(processInfo *ProcessInfo) {
+	h.processInfo = processInfo
+	h.logger.Debugf("Process info updated for health monitor, worker: %s, PID: %d", h.workerID, processInfo.PID)
+}
+
+func (h *healthMonitor) SetRestartCallback(callback HealthRestartCallback) {
+	h.mutex.Lock()
+	defer h.mutex.Unlock()
+	h.restartCallback = callback
+	h.logger.Debugf("Restart callback set for health monitor, worker: %s", h.workerID)
 }

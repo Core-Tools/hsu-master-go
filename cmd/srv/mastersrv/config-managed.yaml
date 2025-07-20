@@ -15,3 +15,14 @@ workers:
             args: ["--port", "50050"]
           restart:
             policy: "on-failure"
+            max_retries: 3
+            retry_delay: "5s"
+            backoff_rate: 1.5
+        health_check:
+          type: "process"
+          run_options:
+            enabled: true
+            interval: "10s"
+            timeout: "5s"
+            initial_delay: "2s"
+            retries: 2
