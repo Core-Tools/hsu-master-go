@@ -65,9 +65,8 @@ func createTestMaster(t *testing.T) *Master {
 	logger.On("Errorf", mock.Anything, mock.Anything).Maybe()
 
 	return &Master{
-		logger:        logger,
-		controls:      make(map[string]ProcessControl),
-		stateMachines: make(map[string]*WorkerStateMachine), // Initialize state machines map
+		logger:  logger,
+		workers: make(map[string]*WorkerEntry), // Updated to use new combined map
 	}
 }
 
@@ -115,7 +114,7 @@ func TestMaster_AddWorker(t *testing.T) {
 		err := master.AddWorker(worker)
 
 		assert.NoError(t, err)
-		assert.Equal(t, 1, len(master.controls))
+		assert.Equal(t, 1, len(master.workers))
 		worker.AssertExpectations(t)
 	})
 
@@ -138,7 +137,7 @@ func TestMaster_AddWorker(t *testing.T) {
 		assert.NoError(t, err1)
 		require.Error(t, err2)
 		assert.True(t, IsConflictError(err2), "Expected ConflictError but got: %v", err2)
-		assert.Equal(t, 1, len(master.controls))
+		assert.Equal(t, 1, len(master.workers))
 
 		// Clean up mock expectations
 		worker1.AssertExpectations(t)
@@ -172,7 +171,7 @@ func TestMaster_RemoveWorker(t *testing.T) {
 		err = master.RemoveWorker("test-worker-1")
 
 		assert.NoError(t, err)
-		assert.Equal(t, 0, len(master.controls))
+		assert.Equal(t, 0, len(master.workers))
 	})
 
 	t.Run("nonexistent_worker", func(t *testing.T) {
@@ -325,7 +324,7 @@ func TestMaster_ConcurrentOperations(t *testing.T) {
 	}
 
 	assert.Equal(t, 0, errorCount, "No errors should occur during concurrent AddWorker operations")
-	assert.Equal(t, 10, len(master.controls))
+	assert.Equal(t, 10, len(master.workers))
 }
 
 func TestMaster_ContextCancellation(t *testing.T) {

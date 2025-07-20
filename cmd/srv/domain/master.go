@@ -16,13 +16,36 @@ type MasterOptions struct {
 	Port int
 }
 
+// MasterState represents the current state of the master server
+type MasterState string
+
+const (
+	// MasterStateNotStarted is the initial state before Run() is called
+	MasterStateNotStarted MasterState = "not_started"
+
+	// MasterStateRunning means master is running and can manage workers
+	MasterStateRunning MasterState = "running"
+
+	// MasterStateStopping means master is shutting down
+	MasterStateStopping MasterState = "stopping"
+
+	// MasterStateStopped means master has stopped
+	MasterStateStopped MasterState = "stopped"
+)
+
+// WorkerEntry combines ProcessControl and StateMachine for a worker
+type WorkerEntry struct {
+	ProcessControl ProcessControl
+	StateMachine   *WorkerStateMachine
+}
+
 type Master struct {
-	options       MasterOptions
-	server        coreControl.Server
-	logger        masterLogging.Logger
-	controls      map[string]ProcessControl
-	stateMachines map[string]*WorkerStateMachine // State machines for each worker
-	mutex         sync.Mutex
+	options     MasterOptions
+	server      coreControl.Server
+	logger      masterLogging.Logger
+	workers     map[string]*WorkerEntry // Combined map for controls and state machines
+	masterState MasterState             // Track master state
+	mutex       sync.Mutex
 }
 
 func NewMaster(options MasterOptions, coreLogger coreLogging.Logger, masterLogger masterLogging.Logger) (*Master, error) {
@@ -45,12 +68,12 @@ func NewMaster(options MasterOptions, coreLogger coreLogging.Logger, masterLogge
 	masterControl.RegisterGRPCServerHandler(server.GRPC(), masterHandler, masterLogger)
 
 	master := &Master{
-		options:       options,
-		server:        server,
-		logger:        masterLogger,
-		controls:      make(map[string]ProcessControl),
-		stateMachines: make(map[string]*WorkerStateMachine), // Initialize state machines map
-		mutex:         sync.Mutex{},
+		options:     options,
+		server:      server,
+		logger:      masterLogger,
+		workers:     make(map[string]*WorkerEntry),
+		masterState: MasterStateNotStarted,
+		mutex:       sync.Mutex{},
 	}
 
 	return master, nil
@@ -82,7 +105,7 @@ func (m *Master) AddWorker(worker Worker) error {
 	defer m.mutex.Unlock()
 
 	// Check if worker already exists
-	if _, exists := m.controls[id]; exists {
+	if _, exists := m.workers[id]; exists {
 		return NewConflictError("worker already exists", nil).WithContext("worker_id", id)
 	}
 
@@ -111,8 +134,10 @@ func (m *Master) AddWorker(worker Worker) error {
 	processControl := NewProcessControl(options, id, logger)
 
 	// Store worker and state machine
-	m.controls[id] = processControl
-	m.stateMachines[id] = stateMachine
+	m.workers[id] = &WorkerEntry{
+		ProcessControl: processControl,
+		StateMachine:   stateMachine,
+	}
 
 	m.logger.Infof("Worker added successfully, id: %s, state: %s", id, stateMachine.GetCurrentState())
 	return nil
@@ -130,24 +155,13 @@ func (m *Master) RemoveWorker(id string) error {
 	defer m.mutex.Unlock()
 
 	// Check if worker exists
-	_, exists := m.controls[id]
-	stateMachine, stateMachineExists := m.stateMachines[id]
+	_, exists := m.workers[id]
 	if !exists {
 		return NewNotFoundError("worker not found", nil).WithContext("worker_id", id)
 	}
 
-	// Validate operation using state machine (if it exists)
-	if stateMachineExists {
-		if err := stateMachine.ValidateOperation("remove"); err != nil {
-			return err
-		}
-	}
-
 	// Remove worker and state machine
-	delete(m.controls, id)
-	if stateMachineExists {
-		delete(m.stateMachines, id)
-	}
+	delete(m.workers, id)
 
 	m.logger.Infof("Worker removed successfully, id: %s", id)
 	return nil
@@ -164,35 +178,43 @@ func (m *Master) StartWorker(ctx context.Context, id string) error {
 		return NewValidationError("invalid worker ID", err).WithContext("worker_id", id)
 	}
 
-	m.logger.Infof("Starting worker, id: %s", id)
-
-	// 1. Get process control and state machine under lock
+	// Check if worker exists first (better error message than master state)
 	m.mutex.Lock()
-	processControl, exists := m.controls[id]
-	stateMachine, stateMachineExists := m.stateMachines[id]
+	workerEntry, exists := m.workers[id]
+	currentMasterState := m.masterState
 	m.mutex.Unlock()
 
-	if !exists || !stateMachineExists {
+	if !exists {
 		return NewNotFoundError("worker not found", nil).WithContext("worker_id", id)
 	}
 
+	// Validate master is running - after worker existence check
+	if currentMasterState != MasterStateRunning {
+		return NewValidationError(
+			fmt.Sprintf("master must be running to start workers, current state: %s", currentMasterState),
+			nil,
+		).WithContext("worker_id", id).WithContext("master_state", string(currentMasterState))
+	}
+
+	m.logger.Infof("Starting worker, id: %s", id)
+
 	// 2. Validate operation using state machine (outside lock)
-	if err := stateMachine.ValidateOperation("start"); err != nil {
+	if err := workerEntry.StateMachine.ValidateOperation("start"); err != nil {
 		return err
 	}
 
 	// 3. Transition to starting state
-	if err := stateMachine.Transition(WorkerStateStarting, "start", nil); err != nil {
+	if err := workerEntry.StateMachine.Transition(WorkerStateStarting, "start", nil); err != nil {
 		return NewInternalError("failed to transition worker to starting state", err).WithContext("worker_id", id)
 	}
 
 	// 4. Start process control (outside of lock, can be long-running)
-	err := processControl.Start(ctx)
+	err := workerEntry.ProcessControl.Start(ctx)
 
 	// 5. Update state based on result
 	if err != nil {
 		// Transition to failed state
-		transitionErr := stateMachine.Transition(WorkerStateFailed, "start", err)
+		transitionErr := workerEntry.StateMachine.Transition(WorkerStateFailed, "start", err)
 		if transitionErr != nil {
 			m.logger.Errorf("Failed to transition worker to failed state, id: %s, error: %v", id, transitionErr)
 		}
@@ -207,12 +229,12 @@ func (m *Master) StartWorker(ctx context.Context, id string) error {
 	}
 
 	// 6. Transition to running state on success
-	if err := stateMachine.Transition(WorkerStateRunning, "start", nil); err != nil {
+	if err := workerEntry.StateMachine.Transition(WorkerStateRunning, "start", nil); err != nil {
 		m.logger.Errorf("Failed to transition worker to running state, id: %s, error: %v", id, err)
 		// Note: Process is actually running, but state tracking failed
 	}
 
-	m.logger.Infof("Worker started successfully, id: %s, state: %s", id, stateMachine.GetCurrentState())
+	m.logger.Infof("Worker started successfully, id: %s, state: %s", id, workerEntry.StateMachine.GetCurrentState())
 	return nil
 }
 
@@ -227,35 +249,43 @@ func (m *Master) StopWorker(ctx context.Context, id string) error {
 		return NewValidationError("invalid worker ID", err).WithContext("worker_id", id)
 	}
 
-	m.logger.Infof("Stopping worker, id: %s", id)
-
-	// 1. Get process control and state machine under lock
+	// Check if worker exists first (better error message than master state)
 	m.mutex.Lock()
-	processControl, exists := m.controls[id]
-	stateMachine, stateMachineExists := m.stateMachines[id]
+	workerEntry, exists := m.workers[id]
+	currentMasterState := m.masterState
 	m.mutex.Unlock()
 
-	if !exists || !stateMachineExists {
+	if !exists {
 		return NewNotFoundError("worker not found", nil).WithContext("worker_id", id)
 	}
 
+	// Validate master is running - after worker existence check
+	if currentMasterState != MasterStateRunning {
+		return NewValidationError(
+			fmt.Sprintf("master must be running to stop workers, current state: %s", currentMasterState),
+			nil,
+		).WithContext("worker_id", id).WithContext("master_state", string(currentMasterState))
+	}
+
+	m.logger.Infof("Stopping worker, id: %s", id)
+
 	// 2. Validate operation using state machine (outside lock)
-	if err := stateMachine.ValidateOperation("stop"); err != nil {
+	if err := workerEntry.StateMachine.ValidateOperation("stop"); err != nil {
 		return err
 	}
 
 	// 3. Transition to stopping state
-	if err := stateMachine.Transition(WorkerStateStopping, "stop", nil); err != nil {
+	if err := workerEntry.StateMachine.Transition(WorkerStateStopping, "stop", nil); err != nil {
 		return NewInternalError("failed to transition worker to stopping state", err).WithContext("worker_id", id)
 	}
 
 	// 4. Stop process control (outside of lock, can be long-running)
-	err := processControl.Stop(ctx)
+	err := workerEntry.ProcessControl.Stop(ctx)
 
 	// 5. Update state based on result
 	if err != nil {
 		// Transition to failed state
-		transitionErr := stateMachine.Transition(WorkerStateFailed, "stop", err)
+		transitionErr := workerEntry.StateMachine.Transition(WorkerStateFailed, "stop", err)
 		if transitionErr != nil {
 			m.logger.Errorf("Failed to transition worker to failed state, id: %s, error: %v", id, transitionErr)
 		}
@@ -270,120 +300,56 @@ func (m *Master) StopWorker(ctx context.Context, id string) error {
 	}
 
 	// 6. Transition to stopped state on success
-	if err := stateMachine.Transition(WorkerStateStopped, "stop", nil); err != nil {
+	if err := workerEntry.StateMachine.Transition(WorkerStateStopped, "stop", nil); err != nil {
 		m.logger.Errorf("Failed to transition worker to stopped state, id: %s, error: %v", id, err)
 		// Note: Process is actually stopped, but state tracking failed
 	}
 
-	m.logger.Infof("Worker stopped successfully, id: %s, state: %s", id, stateMachine.GetCurrentState())
+	m.logger.Infof("Worker stopped successfully, id: %s, state: %s", id, workerEntry.StateMachine.GetCurrentState())
 	return nil
 }
 
 func (m *Master) Run(ctx context.Context) {
 	m.logger.Infof("Starting master...")
 
-	// Start workers with provided context
-	m.startProcessControls(ctx)
+	// Transition master to running state
+	m.mutex.Lock()
+	m.masterState = MasterStateRunning
+	m.mutex.Unlock()
+
+	m.logger.Infof("Master started successfully, ready to manage workers")
 
 	// Start the server (blocks until shutdown)
 	m.server.Run(func() {
-		m.logger.Infof("Shutting down workers...")
-		// Use provided context for shutdown operations
-		// The context allows the caller to control timeouts and cancellation
+		m.logger.Infof("Shutting down master...")
+
+		// Transition to stopping state
+		m.mutex.Lock()
+		m.masterState = MasterStateStopping
+		m.mutex.Unlock()
+
+		// Shutdown workers
 		m.stopProcessControls(ctx)
-		m.logger.Infof("Workers shutdown complete.")
+
+		// Transition to stopped state
+		m.mutex.Lock()
+		m.masterState = MasterStateStopped
+		m.mutex.Unlock()
+
+		m.logger.Infof("Master shutdown complete")
 	})
-}
-
-func (m *Master) startProcessControls(ctx context.Context) {
-	m.logger.Infof("Starting process controls...")
-
-	// 1. Get all process controls and state machines under lock
-	m.mutex.Lock()
-	controlsCopy := make(map[string]ProcessControl)
-	stateMachinesCopy := make(map[string]*WorkerStateMachine)
-
-	for id, control := range m.controls {
-		controlsCopy[id] = control
-	}
-	for id, stateMachine := range m.stateMachines {
-		stateMachinesCopy[id] = stateMachine
-	}
-	m.mutex.Unlock()
-
-	// 2. Start only workers in registered state (outside of lock)
-	errorCollection := NewErrorCollection()
-	startedCount := 0
-	skippedCount := 0
-
-	for id, processControl := range controlsCopy {
-		stateMachine, exists := stateMachinesCopy[id]
-		if !exists {
-			m.logger.Warnf("No state machine found for worker, id: %s, skipping start", id)
-			skippedCount++
-			continue
-		}
-
-		currentState := stateMachine.GetCurrentState()
-
-		// Only start workers that are in registered state
-		if currentState != WorkerStateRegistered {
-			m.logger.Debugf("Worker not in registered state, id: %s, state: %s, skipping start", id, currentState)
-			skippedCount++
-			continue
-		}
-
-		// Validate and transition to starting state
-		if err := stateMachine.ValidateOperation("start"); err != nil {
-			m.logger.Warnf("Cannot start worker due to state validation, id: %s, error: %v", id, err)
-			errorCollection.Add(err)
-			continue
-		}
-
-		if err := stateMachine.Transition(WorkerStateStarting, "start", nil); err != nil {
-			m.logger.Errorf("Failed to transition worker to starting state, id: %s, error: %v", id, err)
-			errorCollection.Add(NewInternalError("failed to transition worker to starting state", err).WithContext("worker_id", id))
-			continue
-		}
-
-		// Start the process control
-		err := processControl.Start(ctx)
-		if err != nil {
-			// Transition to failed state
-			transitionErr := stateMachine.Transition(WorkerStateFailed, "start", err)
-			if transitionErr != nil {
-				m.logger.Errorf("Failed to transition worker to failed state, id: %s, error: %v", id, transitionErr)
-			}
-
-			m.logger.Errorf("Failed to start process control, id: %s, error: %v", id, err)
-			contextualErr := NewProcessError("failed to start process control", err).WithContext("worker_id", id)
-			errorCollection.Add(contextualErr)
-		} else {
-			// Transition to running state on success
-			if err := stateMachine.Transition(WorkerStateRunning, "start", nil); err != nil {
-				m.logger.Errorf("Failed to transition worker to running state, id: %s, error: %v", id, err)
-			}
-			startedCount++
-		}
-	}
-
-	if errorCollection.HasErrors() {
-		m.logger.Errorf("Some process controls failed to start: %v", errorCollection.Error())
-	}
-
-	m.logger.Infof("Process controls start complete: %d started, %d skipped, %d total", startedCount, skippedCount, len(controlsCopy))
 }
 
 func (m *Master) stopProcessControls(ctx context.Context) {
 	m.logger.Infof("Stopping process controls...")
 
 	// 1. Get all process controls under lock
-	controlsCopy := m.getAllControls()
+	workerEntriesCopy := m.getAllWorkers()
 
 	// 2. Stop processes outside of lock
 	errorCollection := NewErrorCollection()
-	for id, processControl := range controlsCopy {
-		err := processControl.Stop(ctx)
+	for id, workerEntry := range workerEntriesCopy {
+		err := workerEntry.ProcessControl.Stop(ctx)
 		if err != nil {
 			m.logger.Errorf("Failed to stop process control, id: %s, error: %v", id, err)
 			// Add context to the error for better debugging
@@ -404,8 +370,11 @@ func (m *Master) getControl(id string) (ProcessControl, bool) {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
-	processControl, exists := m.controls[id]
-	return processControl, exists
+	workerEntry, exists := m.workers[id]
+	if !exists {
+		return nil, false
+	}
+	return workerEntry.ProcessControl, true
 }
 
 // getAllControls returns a copy of all process controls under lock
@@ -414,10 +383,22 @@ func (m *Master) getAllControls() map[string]ProcessControl {
 	defer m.mutex.Unlock()
 
 	controlsCopy := make(map[string]ProcessControl)
-	for id, processControl := range m.controls {
-		controlsCopy[id] = processControl
+	for id, workerEntry := range m.workers {
+		controlsCopy[id] = workerEntry.ProcessControl
 	}
 	return controlsCopy
+}
+
+// getAllWorkers returns a copy of all worker entries under lock
+func (m *Master) getAllWorkers() map[string]*WorkerEntry {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+
+	workerEntriesCopy := make(map[string]*WorkerEntry)
+	for id, workerEntry := range m.workers {
+		workerEntriesCopy[id] = workerEntry
+	}
+	return workerEntriesCopy
 }
 
 // GetWorkerState returns the current state of a worker
@@ -428,14 +409,14 @@ func (m *Master) GetWorkerState(id string) (WorkerState, error) {
 	}
 
 	m.mutex.Lock()
-	stateMachine, exists := m.stateMachines[id]
+	workerEntry, exists := m.workers[id]
 	m.mutex.Unlock()
 
 	if !exists {
 		return WorkerStateUnknown, NewNotFoundError("worker not found", nil).WithContext("worker_id", id)
 	}
 
-	return stateMachine.GetCurrentState(), nil
+	return workerEntry.StateMachine.GetCurrentState(), nil
 }
 
 // GetWorkerStateInfo returns comprehensive state information for a worker
@@ -446,28 +427,28 @@ func (m *Master) GetWorkerStateInfo(id string) (WorkerStateInfo, error) {
 	}
 
 	m.mutex.Lock()
-	stateMachine, exists := m.stateMachines[id]
+	workerEntry, exists := m.workers[id]
 	m.mutex.Unlock()
 
 	if !exists {
 		return WorkerStateInfo{}, NewNotFoundError("worker not found", nil).WithContext("worker_id", id)
 	}
 
-	return stateMachine.GetStateInfo(), nil
+	return workerEntry.StateMachine.GetStateInfo(), nil
 }
 
 // GetAllWorkerStates returns state information for all workers
 func (m *Master) GetAllWorkerStates() map[string]WorkerStateInfo {
 	m.mutex.Lock()
-	stateMachinesCopy := make(map[string]*WorkerStateMachine)
-	for id, stateMachine := range m.stateMachines {
-		stateMachinesCopy[id] = stateMachine
+	workerEntriesCopy := make(map[string]*WorkerEntry)
+	for id, workerEntry := range m.workers {
+		workerEntriesCopy[id] = workerEntry
 	}
 	m.mutex.Unlock()
 
 	result := make(map[string]WorkerStateInfo)
-	for id, stateMachine := range stateMachinesCopy {
-		result[id] = stateMachine.GetStateInfo()
+	for id, workerEntry := range workerEntriesCopy {
+		result[id] = workerEntry.StateMachine.GetStateInfo()
 	}
 	return result
 }
@@ -480,12 +461,19 @@ func (m *Master) IsWorkerOperationAllowed(id string, operation string) (bool, er
 	}
 
 	m.mutex.Lock()
-	stateMachine, exists := m.stateMachines[id]
+	workerEntry, exists := m.workers[id]
 	m.mutex.Unlock()
 
 	if !exists {
 		return false, NewNotFoundError("worker not found", nil).WithContext("worker_id", id)
 	}
 
-	return stateMachine.IsOperationAllowed(operation), nil
+	return workerEntry.StateMachine.IsOperationAllowed(operation), nil
+}
+
+// GetMasterState returns the current state of the master
+func (m *Master) GetMasterState() MasterState {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	return m.masterState
 }

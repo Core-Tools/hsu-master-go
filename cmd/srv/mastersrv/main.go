@@ -143,15 +143,30 @@ func main() {
 
 	ctx := context.Background()
 
+	// 1. Add workers (registration only - allowed before Run)
 	for _, worker := range workers {
-		// Add worker (registration only)
 		err = master.AddWorker(worker)
 		if err != nil {
 			logger.Errorf("Failed to add worker: %v", err)
 			os.Exit(1)
 		}
+	}
 
-		// Start worker (lifecycle management)
+	// 2. Start master in background (master.Run blocks until shutdown)
+	go func() {
+		master.Run(ctx)
+	}()
+
+	// 3. Wait for master to be running before starting workers
+	for {
+		if master.GetMasterState() == domain.MasterStateRunning {
+			break
+		}
+		time.Sleep(10 * time.Millisecond) // Small delay
+	}
+
+	// 4. Now start workers (only after master is running)
+	for _, worker := range workers {
 		err = master.StartWorker(ctx, worker.ID())
 		if err != nil {
 			logger.Errorf("Failed to start worker: %v", err)
@@ -159,5 +174,6 @@ func main() {
 		}
 	}
 
-	master.Run(ctx)
+	// 5. Keep main goroutine alive (master.Run is running in background)
+	select {} // Block forever until process is terminated
 }
