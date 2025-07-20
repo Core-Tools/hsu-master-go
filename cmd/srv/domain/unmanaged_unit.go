@@ -2,14 +2,14 @@ package domain
 
 type UnmanagedUnit struct {
 	// Metadata
-	Metadata UnitMetadata
+	Metadata UnitMetadata `yaml:"metadata"`
 
 	// Discovery
-	Discovery DiscoveryConfig
+	Discovery DiscoveryConfig `yaml:"discovery"`
 
 	// Process control
-	Control SystemProcessControlConfig
+	Control SystemProcessControlConfig `yaml:"control"`
 
 	// Health monitoring
-	HealthCheck HealthCheckConfig
+	HealthCheck HealthCheckConfig `yaml:"health_check,omitempty"`
 }

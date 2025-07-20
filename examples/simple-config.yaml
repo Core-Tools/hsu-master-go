@@ -1,0 +1,31 @@
+# Simple HSU Master Configuration
+# Minimal configuration for development and testing
+
+master:
+  port: 50055
+
+workers:
+  # Simple managed worker (enabled defaults to true)
+  - id: "test-service"
+    type: "managed"
+    unit:
+      managed:
+        metadata:
+          name: "Test Service"
+        control:
+          execution:
+            executable_path: "./bin/test-service"
+          restart:
+            policy: "on-failure"
+
+  # Simple integrated worker (enabled field omitted - defaults to true)
+  - id: "echo-service"
+    type: "integrated"
+    unit:
+      integrated:
+        metadata:
+          name: "Echo Service"
+        control:
+          execution:
+            executable_path: "./bin/echogrpcsrv"
+            args: ["--port", "8080"] 

@@ -18,53 +18,53 @@ const (
 )
 
 type HTTPHealthCheckConfig struct {
-	URL     string
-	PMethod string
-	Headers map[string]string
+	URL     string            `yaml:"url"`
+	PMethod string            `yaml:"method,omitempty"`
+	Headers map[string]string `yaml:"headers,omitempty"`
 }
 
 type GRPCHealthCheckConfig struct {
-	Address string
-	Service string
-	Method  string
-	Headers map[string]string
+	Address string            `yaml:"address"`
+	Service string            `yaml:"service,omitempty"`
+	Method  string            `yaml:"method,omitempty"`
+	Headers map[string]string `yaml:"headers,omitempty"`
 }
 
 type TCPHealthCheckConfig struct {
-	Address string
-	Port    int
+	Address string `yaml:"address"`
+	Port    int    `yaml:"port"`
 }
 
 type ExecHealthCheckConfig struct {
-	Command string
-	Args    []string
+	Command string   `yaml:"command"`
+	Args    []string `yaml:"args,omitempty"`
 }
 
 type HealthCheckConfig struct {
-	Type HealthCheckType
+	Type HealthCheckType `yaml:"type"`
 
 	// HTTP health check
-	HTTP HTTPHealthCheckConfig
+	HTTP HTTPHealthCheckConfig `yaml:"http,omitempty"`
 
 	// GRPC health check
-	GRPC GRPCHealthCheckConfig
+	GRPC GRPCHealthCheckConfig `yaml:"grpc,omitempty"`
 
 	// TCP health check
-	TCP TCPHealthCheckConfig
+	TCP TCPHealthCheckConfig `yaml:"tcp,omitempty"`
 
 	// Exec health check
-	Exec ExecHealthCheckConfig
+	Exec ExecHealthCheckConfig `yaml:"exec,omitempty"`
 
 	// Run options
-	RunOptions HealthCheckRunOptions
+	RunOptions HealthCheckRunOptions `yaml:"run_options,omitempty"`
 }
 
 type HealthCheckRunOptions struct {
-	Enabled      bool
-	Interval     time.Duration
-	Timeout      time.Duration
-	InitialDelay time.Duration
-	Retries      int
+	Enabled      bool          `yaml:"enabled,omitempty"`
+	Interval     time.Duration `yaml:"interval,omitempty"`
+	Timeout      time.Duration `yaml:"timeout,omitempty"`
+	InitialDelay time.Duration `yaml:"initial_delay,omitempty"`
+	Retries      int           `yaml:"retries,omitempty"`
 }
 
 type HealthCheckStatus string

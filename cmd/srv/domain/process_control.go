@@ -13,18 +13,18 @@ import (
 
 type SystemProcessControlConfig struct {
 	// Basic control
-	CanTerminate bool // Can send SIGTERM/SIGKILL
-	CanRestart   bool // Can restart (via service manager)
+	CanTerminate bool `yaml:"can_terminate,omitempty"` // Can send SIGTERM/SIGKILL
+	CanRestart   bool `yaml:"can_restart,omitempty"`   // Can restart (via service manager)
 
 	// Service manager integration
-	ServiceManager string // "systemd", "windows", "launchd"
-	ServiceName    string // Service name for restart
+	ServiceManager string `yaml:"service_manager,omitempty"` // "systemd", "windows", "launchd"
+	ServiceName    string `yaml:"service_name,omitempty"`    // Service name for restart
 
 	// Process signals
-	AllowedSignals []os.Signal // Allowed signals to send
+	AllowedSignals []os.Signal `yaml:"allowed_signals,omitempty"` // Allowed signals to send
 
 	// Graceful shutdown
-	GracefulTimeout time.Duration // Time to wait for graceful shutdown
+	GracefulTimeout time.Duration `yaml:"graceful_timeout,omitempty"` // Time to wait for graceful shutdown
 }
 
 type RestartPolicy string
@@ -37,43 +37,43 @@ const (
 )
 
 type RestartConfig struct {
-	Policy      RestartPolicy
-	MaxRetries  int
-	RetryDelay  time.Duration
-	BackoffRate float64 // Exponential backoff multiplier
+	Policy      RestartPolicy `yaml:"policy"`
+	MaxRetries  int           `yaml:"max_retries"`
+	RetryDelay  time.Duration `yaml:"retry_delay"`
+	BackoffRate float64       `yaml:"backoff_rate"` // Exponential backoff multiplier
 }
 
 type ResourceLimits struct {
 	// Process priority
-	Priority int
+	Priority int `yaml:"priority,omitempty"`
 
 	// CPU limits
-	CPU       float64 // Number of CPU cores
-	CPUShares int     // CPU weight (Linux cgroups)
+	CPU       float64 `yaml:"cpu,omitempty"`        // Number of CPU cores
+	CPUShares int     `yaml:"cpu_shares,omitempty"` // CPU weight (Linux cgroups)
 
 	// Memory limits
-	Memory     int64 // Memory limit in bytes
-	MemorySwap int64 // Memory + swap limit
+	Memory     int64 `yaml:"memory,omitempty"`      // Memory limit in bytes
+	MemorySwap int64 `yaml:"memory_swap,omitempty"` // Memory + swap limit
 
 	// Process limits
-	MaxProcesses int // Maximum number of processes
-	MaxOpenFiles int // Maximum open file descriptors
+	MaxProcesses int `yaml:"max_processes,omitempty"`  // Maximum number of processes
+	MaxOpenFiles int `yaml:"max_open_files,omitempty"` // Maximum open file descriptors
 
 	// I/O limits
-	IOWeight   int   // I/O priority weight
-	IOReadBPS  int64 // Read bandwidth limit
-	IOWriteBPS int64 // Write bandwidth limit
+	IOWeight   int   `yaml:"io_weight,omitempty"`    // I/O priority weight
+	IOReadBPS  int64 `yaml:"io_read_bps,omitempty"`  // Read bandwidth limit
+	IOWriteBPS int64 `yaml:"io_write_bps,omitempty"` // Write bandwidth limit
 }
 
 type ManagedProcessControlConfig struct {
 	// Process execution
-	Execution ExecutionConfig
+	Execution ExecutionConfig `yaml:"execution"`
 
 	// Process restart
-	Restart RestartConfig
+	Restart RestartConfig `yaml:"restart"`
 
 	// Resource management
-	Limits ResourceLimits
+	Limits ResourceLimits `yaml:"limits,omitempty"`
 
 	/*
 		// I/O handling
@@ -86,7 +86,7 @@ type ManagedProcessControlConfig struct {
 	*/
 
 	// Graceful shutdown
-	GracefulTimeout time.Duration // Time to wait for graceful shutdown
+	GracefulTimeout time.Duration `yaml:"graceful_timeout,omitempty"` // Time to wait for graceful shutdown
 }
 
 type DiscoveryMethod string
@@ -99,24 +99,24 @@ const (
 )
 
 type DiscoveryConfig struct {
-	Method DiscoveryMethod
+	Method DiscoveryMethod `yaml:"method"`
 
 	// Process name discovery
-	ProcessName string
-	ProcessArgs []string // Optional: match by command line args
+	ProcessName string   `yaml:"process_name,omitempty"`
+	ProcessArgs []string `yaml:"process_args,omitempty"` // Optional: match by command line args
 
 	// Port discovery
-	Port     int
-	Protocol string // "tcp", "udp"
+	Port     int    `yaml:"port,omitempty"`
+	Protocol string `yaml:"protocol,omitempty"` // "tcp", "udp"
 
 	// PID file discovery
-	PIDFile string
+	PIDFile string `yaml:"pid_file,omitempty"`
 
 	// Service discovery (systemd, Windows services)
-	ServiceName string
+	ServiceName string `yaml:"service_name,omitempty"`
 
 	// Discovery frequency
-	CheckInterval time.Duration
+	CheckInterval time.Duration `yaml:"check_interval,omitempty"`
 }
 
 type ProcessControl interface {

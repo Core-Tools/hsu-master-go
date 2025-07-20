@@ -1,0 +1,123 @@
+# HSU Master Configuration Example
+# This file demonstrates all supported worker types and configuration options
+
+master:
+  port: 50055
+  log_level: "info"
+
+workers:
+  # Example 1: Managed Worker - Full process lifecycle management
+  - id: "echo-service"
+    type: "managed"
+    enabled: true  # Optional: defaults to true if not specified
+    unit:
+      managed:
+        metadata:
+          name: "Echo gRPC Service"
+          description: "Production echo service with health checks"
+        control:
+          execution:
+            executable_path: "./bin/echogrpcsrv"
+            args: ["--port", "8080", "--env", "production"]
+            environment:
+              - "LOG_LEVEL=info"
+              - "DB_URL=postgres://localhost:5432/echo_db"
+            working_directory: "/app"
+            wait_delay: "10s"
+          restart:
+            policy: "always"
+            max_retries: 5
+            retry_delay: "5s"
+            backoff_rate: 2.0
+          limits:
+            priority: 0
+            cpu: 2.0
+            memory: 536870912  # 512MB
+            max_processes: 10
+            max_open_files: 1024
+          graceful_timeout: "30s"
+        health_check:
+          type: "http"
+          http:
+            url: "http://localhost:8080/health"
+            method: "GET"
+          run_options:
+            enabled: true
+            interval: "30s"
+            timeout: "5s"
+            initial_delay: "10s"
+            retries: 3
+
+  # Example 2: Unmanaged Worker - Monitor existing process
+  - id: "database-monitor"
+    type: "unmanaged"
+    enabled: true  # Optional: defaults to true if not specified
+    unit:
+      unmanaged:
+        metadata:
+          name: "PostgreSQL Database"
+          description: "Monitors existing PostgreSQL instance"
+        discovery:
+          method: "pid-file"
+          pid_file: "/var/run/postgresql/postgresql.pid"
+          check_interval: "60s"
+        control:
+          can_terminate: true
+          can_restart: false
+          allowed_signals: ["SIGTERM", "SIGKILL"]
+          graceful_timeout: "30s"
+        health_check:
+          type: "tcp"
+          tcp:
+            address: "localhost"
+            port: 5432
+          run_options:
+            enabled: true
+            interval: "60s"
+            timeout: "10s"
+
+  # Example 3: Integrated Worker - Simple process management
+  - id: "web-frontend"
+    type: "integrated"
+    # enabled field omitted - defaults to true
+    unit:
+      integrated:
+        metadata:
+          name: "Web Frontend"
+          description: "React.js frontend application"
+        control:
+          execution:
+            executable_path: "./bin/frontend"
+            args: ["--config", "production.json", "--port", "3000"]
+            environment:
+              - "NODE_ENV=production"
+              - "API_URL=http://localhost:8080"
+            wait_delay: "5s"
+          restart:
+            policy: "always"
+            max_retries: 3
+            retry_delay: "10s"
+            backoff_rate: 1.5
+        health_check_run_options:
+          enabled: true
+          interval: "30s"
+          timeout: "5s"
+
+  # Example 4: Disabled Worker - For conditional deployment
+  - id: "debug-service"
+    type: "managed"
+    enabled: false  # Explicitly disabled
+    unit:
+      managed:
+        metadata:
+          name: "Debug Service"
+          description: "Debugging and profiling service"
+        control:
+          execution:
+            executable_path: "./bin/debug-srv"
+            args: ["--profile", "cpu"]
+            wait_delay: "5s"
+          restart:
+            policy: "on-failure"
+            max_retries: 1
+            retry_delay: "30s" 

@@ -217,14 +217,14 @@ func ensureExecutable(path string) error {
 */
 
 type ExecutionConfig struct {
-	ExecutablePath   string
-	Args             []string
-	Environment      []string
-	WorkingDirectory string
-	WaitDelay        time.Duration
+	ExecutablePath   string        `yaml:"executable_path"`
+	Args             []string      `yaml:"args,omitempty"`
+	Environment      []string      `yaml:"environment,omitempty"`
+	WorkingDirectory string        `yaml:"working_directory,omitempty"`
+	WaitDelay        time.Duration `yaml:"wait_delay,omitempty"`
 
 	// PID file configuration (optional)
-	ProcessFileConfig *ProcessFileConfig
+	ProcessFileConfig *ProcessFileConfig `yaml:"process_file,omitempty"`
 }
 
 type StdExecuteCmd func(ctx context.Context) (*exec.Cmd, io.ReadCloser, error)

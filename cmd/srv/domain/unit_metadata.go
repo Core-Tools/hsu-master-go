@@ -1,6 +1,6 @@
 package domain
 
 type UnitMetadata struct {
-	Name        string
-	Description string
+	Name        string `yaml:"name"`
+	Description string `yaml:"description,omitempty"`
 }

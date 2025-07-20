@@ -2,14 +2,14 @@ package domain
 
 type ManagedUnit struct {
 	// Metadata
-	Metadata UnitMetadata
+	Metadata UnitMetadata `yaml:"metadata"`
 
 	// Discovery
 	// Always use process PID file discovery
 
 	// Process control
-	Control ManagedProcessControlConfig
+	Control ManagedProcessControlConfig `yaml:"control"`
 
 	// Health monitoring
-	HealthCheck HealthCheckConfig
+	HealthCheck HealthCheckConfig `yaml:"health_check,omitempty"`
 }
