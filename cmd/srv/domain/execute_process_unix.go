@@ -7,6 +7,10 @@ import (
 	"syscall"
 )
 
+func resetConsoleSignals(setHandler bool) error {
+	return nil
+}
+
 // setupProcessAttributes configures Unix-specific process attributes
 func setupProcessAttributes(cmd *exec.Cmd) {
 	// On Unix, create a new process group that we can signal as a whole

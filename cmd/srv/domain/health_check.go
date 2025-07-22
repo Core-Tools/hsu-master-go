@@ -95,24 +95,29 @@ type HealthCheckState struct {
 // HealthRestartCallback defines a callback function for triggering restarts on health failures
 type HealthRestartCallback func(reason string) error
 
+// HealthRecoveryCallback defines a callback function for when health recovers
+type HealthRecoveryCallback func()
+
 type HealthMonitor interface {
 	State() *HealthCheckState
 	Start()
 	Stop()
-	SetRestartCallback(callback HealthRestartCallback) // Add restart callback
+	SetRestartCallback(callback HealthRestartCallback)   // Add restart callback
+	SetRecoveryCallback(callback HealthRecoveryCallback) // Add recovery callback
 }
 
 type healthMonitor struct {
-	config          *HealthCheckConfig
-	state           *HealthCheckState
-	stopChan        chan struct{}
-	wg              sync.WaitGroup
-	mutex           sync.Mutex
-	logger          logging.Logger
-	workerID        string
-	processInfo     *ProcessInfo          // Add process information for health checking
-	restartCallback HealthRestartCallback // Callback for triggering restarts
-	restartPolicy   *RestartConfig        // Restart policy configuration
+	config           *HealthCheckConfig
+	state            *HealthCheckState
+	stopChan         chan struct{}
+	wg               sync.WaitGroup
+	mutex            sync.Mutex
+	logger           logging.Logger
+	workerID         string
+	processInfo      *ProcessInfo           // Add process information for health checking
+	restartCallback  HealthRestartCallback  // Callback for triggering restarts
+	recoveryCallback HealthRecoveryCallback // Callback for health recovery
+	restartPolicy    *RestartConfig         // Restart policy configuration
 }
 
 // ProcessInfo holds process information needed for health monitoring
@@ -256,10 +261,18 @@ func (h *healthMonitor) updateState(isHealthy bool, message string) {
 		h.state.ConsecutiveFailures = 0
 		h.state.Retries = 0
 
+		previousWasUnhealthy := previousStatus == HealthCheckStatusDegraded || previousStatus == HealthCheckStatusUnhealthy
+
 		if h.state.Status != HealthCheckStatusHealthy {
 			h.state.Status = HealthCheckStatusHealthy
 			h.logger.Infof("Health check recovered, worker: %s, previous: %s, consecutive_successes: %d",
 				h.workerID, previousStatus, h.state.ConsecutiveSuccesses)
+
+			// Call recovery callback if process recovered from unhealthy state
+			if previousWasUnhealthy && h.recoveryCallback != nil {
+				h.logger.Infof("Triggering recovery callback, worker: %s, recovered from: %s", h.workerID, previousStatus)
+				go h.recoveryCallback() // Call in goroutine to avoid blocking health check
+			}
 		} else {
 			h.logger.Debugf("Health check passed, worker: %s, consecutive_successes: %d",
 				h.workerID, h.state.ConsecutiveSuccesses)
@@ -507,4 +520,11 @@ func (h *healthMonitor) SetRestartCallback(callback HealthRestartCallback) {
 	defer h.mutex.Unlock()
 	h.restartCallback = callback
 	h.logger.Debugf("Restart callback set for health monitor, worker: %s", h.workerID)
+}
+
+func (h *healthMonitor) SetRecoveryCallback(callback HealthRecoveryCallback) {
+	h.mutex.Lock()
+	defer h.mutex.Unlock()
+	h.recoveryCallback = callback
+	h.logger.Debugf("Recovery callback set for health monitor, worker: %s", h.workerID)
 }

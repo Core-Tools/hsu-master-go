@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"sync"
 	"time"
 
 	"github.com/core-tools/hsu-master/pkg/logging"
@@ -164,6 +165,12 @@ type processControl struct {
 	healthMonitor HealthMonitor
 	logger        logging.Logger
 	workerID      string
+
+	// Persistent restart tracking (survives health monitor recreation)
+	restartAttempts    int        // Track attempts across health monitor restarts
+	lastRestartTime    time.Time  // Track timing for retry delay and backoff
+	circuitBreakerOpen bool       // Circuit breaker to stop excessive restarts
+	mutex              sync.Mutex // Protect restart state
 }
 
 func NewProcessControl(config ProcessControlOptions, workerID string, logger logging.Logger) ProcessControl {
@@ -276,15 +283,81 @@ func (pc *processControl) Start(ctx context.Context) error {
 			healthMonitor.SetRestartCallback(func(reason string) error {
 				pc.logger.Warnf("Health monitor requesting restart, worker: %s, reason: %s", pc.workerID, reason)
 
+				pc.mutex.Lock()
+				defer pc.mutex.Unlock()
+
+				// Check circuit breaker
+				if pc.circuitBreakerOpen {
+					pc.logger.Errorf("Circuit breaker is open, ignoring restart request, worker: %s, attempts: %d",
+						pc.workerID, pc.restartAttempts)
+					return fmt.Errorf("restart circuit breaker is open")
+				}
+
+				// Check max retries
+				if pc.config.Restart.MaxRetries > 0 && pc.restartAttempts >= pc.config.Restart.MaxRetries {
+					pc.logger.Errorf("Max restart retries exceeded, opening circuit breaker, worker: %s, attempts: %d, max: %d",
+						pc.workerID, pc.restartAttempts, pc.config.Restart.MaxRetries)
+					pc.circuitBreakerOpen = true
+					return fmt.Errorf("max restart retries exceeded: %d", pc.restartAttempts)
+				}
+
+				// Calculate retry delay with exponential backoff
+				now := time.Now()
+				timeSinceLastRestart := now.Sub(pc.lastRestartTime)
+
+				retryDelay := pc.config.Restart.RetryDelay
+				if pc.restartAttempts > 0 {
+					// Apply exponential backoff
+					backoffMultiplier := 1.0
+					for i := 0; i < pc.restartAttempts; i++ {
+						backoffMultiplier *= pc.config.Restart.BackoffRate
+					}
+					retryDelay = time.Duration(float64(retryDelay) * backoffMultiplier)
+				}
+
+				// Enforce retry delay
+				if timeSinceLastRestart < retryDelay {
+					waitTime := retryDelay - timeSinceLastRestart
+					pc.logger.Infof("Enforcing retry delay, worker: %s, attempt: %d, waiting: %v",
+						pc.workerID, pc.restartAttempts+1, waitTime)
+
+					// Release lock during sleep to prevent deadlock
+					pc.mutex.Unlock()
+					time.Sleep(waitTime)
+					pc.mutex.Lock()
+
+					// Re-check circuit breaker after sleep
+					if pc.circuitBreakerOpen {
+						return fmt.Errorf("restart circuit breaker opened during delay")
+					}
+				}
+
+				// Increment attempt counter and update timestamp
+				pc.restartAttempts++
+				pc.lastRestartTime = time.Now()
+
+				pc.logger.Warnf("Proceeding with restart, worker: %s, attempt: %d/%d, delay: %v",
+					pc.workerID, pc.restartAttempts, pc.config.Restart.MaxRetries, retryDelay)
+
+				// Release lock before calling restart to prevent deadlock
+				pc.mutex.Unlock()
+				defer func() { pc.mutex.Lock() }()
+
 				// Use a background context for restart since this is triggered by health failure
 				ctx := context.Background()
-				if err := pc.Restart(ctx); err != nil {
+				if err := pc.restartInternal(ctx); err != nil {
 					pc.logger.Errorf("Failed to restart process, worker: %s, error: %v", pc.workerID, err)
 					return err
 				}
 
-				pc.logger.Infof("Process restart completed, worker: %s", pc.workerID)
+				pc.logger.Infof("Process restart completed, worker: %s, attempt: %d", pc.workerID, pc.restartAttempts)
 				return nil
+			})
+
+			// Set up recovery callback to reset circuit breaker when process becomes healthy
+			healthMonitor.SetRecoveryCallback(func() {
+				pc.logger.Infof("Health recovered, resetting circuit breaker, worker: %s", pc.workerID)
+				pc.resetCircuitBreaker()
 			})
 		}
 
@@ -296,6 +369,10 @@ func (pc *processControl) Start(ctx context.Context) error {
 }
 
 func (pc *processControl) Stop(ctx context.Context) error {
+	return pc.doStop(ctx, false)
+}
+
+func (pc *processControl) doStop(ctx context.Context, attachConsole bool) error {
 	// Validate context
 	if ctx == nil {
 		return NewValidationError("context cannot be nil", nil)
@@ -324,7 +401,7 @@ func (pc *processControl) Stop(ctx context.Context) error {
 	}
 
 	// 3. Terminate the process gracefully with context
-	if err := pc.terminateProcess(ctx); err != nil {
+	if err := pc.terminateProcess(ctx, attachConsole); err != nil {
 		pc.logger.Errorf("Failed to terminate process: %v", err)
 		return NewProcessError("failed to terminate process", err)
 	}
@@ -344,8 +421,13 @@ func (pc *processControl) Restart(ctx context.Context) error {
 		return fmt.Errorf("process not attached")
 	}
 
+	return pc.restartInternal(ctx)
+}
+
+// restartInternal performs the actual restart without additional validation
+func (pc *processControl) restartInternal(ctx context.Context) error {
 	// 1. Stop the current process
-	if err := pc.Stop(ctx); err != nil {
+	if err := pc.doStop(ctx, true); err != nil {
 		pc.logger.Errorf("Failed to stop process during restart: %v", err)
 		return fmt.Errorf("failed to stop process during restart: %v", err)
 	}
@@ -360,8 +442,22 @@ func (pc *processControl) Restart(ctx context.Context) error {
 	return nil
 }
 
+// resetCircuitBreaker resets the circuit breaker when process runs successfully
+func (pc *processControl) resetCircuitBreaker() {
+	pc.mutex.Lock()
+	defer pc.mutex.Unlock()
+
+	if pc.restartAttempts > 0 || pc.circuitBreakerOpen {
+		pc.logger.Infof("Resetting circuit breaker, worker: %s, previous attempts: %d",
+			pc.workerID, pc.restartAttempts)
+		pc.restartAttempts = 0
+		pc.circuitBreakerOpen = false
+		pc.lastRestartTime = time.Time{} // Reset timestamp
+	}
+}
+
 // terminateProcess handles graceful process termination with timeout and context cancellation
-func (pc *processControl) terminateProcess(ctx context.Context) error {
+func (pc *processControl) terminateProcess(ctx context.Context, attachConsole bool) error {
 	if pc.process == nil {
 		return NewProcessError("no process to terminate", nil)
 	}
@@ -391,9 +487,11 @@ func (pc *processControl) terminateProcess(ctx context.Context) error {
 
 	// Try graceful termination first
 	pc.logger.Infof("Sending termination signal to process PID %d", pid)
-	if err := pc.sendTerminationSignal(); err != nil {
+	if err := pc.sendTerminationSignal(attachConsole); err != nil {
 		pc.logger.Warnf("Failed to send termination signal: %v", err)
 	}
+
+	pc.logger.Infof("Waiting for process PID %d to terminate gracefully", pid)
 
 	// Wait for graceful shutdown, timeout, or context cancellation
 	select {
@@ -431,7 +529,7 @@ func (pc *processControl) terminateProcess(ctx context.Context) error {
 }
 
 // sendTerminationSignal sends a graceful termination signal to the process
-func (pc *processControl) sendTerminationSignal() error {
+func (pc *processControl) sendTerminationSignal(attachConsole bool) error {
 	if pc.process == nil {
 		return NewProcessError("no process to signal", nil)
 	}
@@ -439,7 +537,7 @@ func (pc *processControl) sendTerminationSignal() error {
 	// Use the platform-specific termination signal
 	// On Unix: SIGTERM to process group
 	// On Windows: Ctrl-Break event
-	if err := pc.sendGracefulSignal(); err != nil {
+	if err := pc.sendGracefulSignal(attachConsole); err != nil {
 		return NewProcessError("failed to send graceful signal", err).WithContext("pid", pc.process.Pid)
 	}
 	return nil

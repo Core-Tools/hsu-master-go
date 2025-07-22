@@ -7,7 +7,7 @@ import (
 )
 
 // sendGracefulSignal sends SIGTERM to the process group on Unix systems
-func (pc *processControl) sendGracefulSignal() error {
+func (pc *processControl) sendGracefulSignal(attachConsole bool) error {
 	if pc.process == nil {
 		return nil
 	}

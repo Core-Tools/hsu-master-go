@@ -3,7 +3,7 @@ master:
 
 workers:
   # Simple managed worker (enabled defaults to true)
-  - id: "test-managed"
+  - id: "test-managed-1"
     type: "managed"
     unit:
       managed:
@@ -12,7 +12,30 @@ workers:
         control:
           execution:
             executable_path: "..\\..\\..\\..\\hsu-example1-go\\cmd\\srv\\echogrpcsrv\\echogrpcsrv.exe"
-            args: ["--port", "50050"]
+            args: ["--port", "50051"]
+          restart:
+            policy: "on-failure"
+            max_retries: 3
+            retry_delay: "5s"
+            backoff_rate: 1.5
+        health_check:
+          type: "process"
+          run_options:
+            enabled: true
+            interval: "10s"
+            timeout: "5s"
+            initial_delay: "2s"
+            retries: 2
+  - id: "test-managed-2"
+    type: "managed"
+    unit:
+      managed:
+        metadata:
+          name: "Echo gRPC server as managed unit"
+        control:
+          execution:
+            executable_path: "..\\..\\..\\..\\hsu-example1-go\\cmd\\srv\\echogrpcsrv\\echogrpcsrv.exe"
+            args: ["--port", "50052"]
           restart:
             policy: "on-failure"
             max_retries: 3

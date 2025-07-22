@@ -276,7 +276,7 @@ func validateMasterConfig(config *MasterConfigOptions) error {
 
 func validateWorkersConfig(workers []WorkerConfig) error {
 	if len(workers) == 0 {
-		return NewValidationError("at least one worker must be configured", nil)
+		return nil // Allow empty workers list
 	}
 
 	// Check for duplicate worker IDs

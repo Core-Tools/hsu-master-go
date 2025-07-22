@@ -50,6 +50,12 @@ type Master struct {
 }
 
 func NewMaster(options MasterOptions, coreLogger coreLogging.Logger, masterLogger masterLogging.Logger) (*Master, error) {
+	// Prepare OS console
+	err := prepareOSConsole()
+	if err != nil {
+		return nil, NewInternalError("failed to prepare OS console", err)
+	}
+
 	// Create gRPC server
 	serverOptions := coreControl.ServerOptions{
 		Port: options.Port,
@@ -57,7 +63,7 @@ func NewMaster(options MasterOptions, coreLogger coreLogging.Logger, masterLogge
 
 	server, err := coreControl.NewServer(serverOptions, coreLogger)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create server: %v", err)
+		return nil, NewInternalError("failed to create server", err)
 	}
 
 	// Register core services
@@ -339,12 +345,7 @@ func (m *Master) StopWorker(ctx context.Context, id string) error {
 const DefaultForcedShutdownTimeout = 25 * time.Second
 
 func (m *Master) Run(ctx context.Context) {
-	stopped := make(chan struct{})
-	m.RunWithOptions(RunOptions{
-		Context:               ctx,
-		ForcedShutdownTimeout: DefaultForcedShutdownTimeout,
-		Stopped:               stopped,
-	})
+	m.RunWithOptions(RunOptions{Context: ctx})
 }
 
 type RunOptions struct {
@@ -356,27 +357,6 @@ type RunOptions struct {
 func (m *Master) RunWithOptions(options RunOptions) {
 	m.logger.Infof("Starting master...")
 
-	var ctx context.Context
-	if options.Context == nil {
-		ctx = context.Background()
-	} else {
-		ctx = options.Context
-	}
-
-	var stopped chan struct{}
-	if options.Stopped == nil {
-		stopped = make(chan struct{})
-	} else {
-		stopped = options.Stopped
-	}
-
-	var forcedShutdownTimeout time.Duration
-	if options.ForcedShutdownTimeout == 0 {
-		forcedShutdownTimeout = DefaultForcedShutdownTimeout
-	} else {
-		forcedShutdownTimeout = options.ForcedShutdownTimeout
-	}
-
 	// Transition master to running state
 	m.setMasterState(MasterStateRunning)
 
@@ -384,9 +364,9 @@ func (m *Master) RunWithOptions(options RunOptions) {
 
 	// Start the server (blocks until shutdown)
 	coreServerRunOptions := coreControl.RunOptions{
-		Context:               ctx,
-		ForcedShutdownTimeout: forcedShutdownTimeout,
-		Stopped:               stopped,
+		Context:               options.Context,
+		ForcedShutdownTimeout: options.ForcedShutdownTimeout,
+		Stopped:               options.Stopped,
 	}
 	m.server.RunWithOptions(coreServerRunOptions, func() {
 		m.logger.Infof("Shutting down master...")
@@ -395,6 +375,10 @@ func (m *Master) RunWithOptions(options RunOptions) {
 		m.setMasterState(MasterStateStopping)
 
 		// Shutdown workers
+		ctx := options.Context
+		if ctx == nil {
+			ctx = context.Background()
+		}
 		m.stopProcessControls(ctx)
 
 		// Transition to stopped state
