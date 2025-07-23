@@ -18,13 +18,13 @@ func prepareOSConsole() error {
 	}
 
 	fmt.Println("----------- Freeing console")
-	if err := callFreeConsole(dll); err != nil {
+	if err := freeConsole(); err != nil {
 		return fmt.Errorf("prepare OS console: %v", err)
 	}
 	fmt.Println("----------- Console freed")
 
 	fmt.Println("----------- Allocating console")
-	if err := callAllocConsole(dll); err != nil {
+	if err := allocConsole(); err != nil {
 		return fmt.Errorf("prepare OS console: %v", err)
 	}
 	fmt.Println("----------- Console allocated")

@@ -6,100 +6,55 @@ import (
 	"fmt"
 	"sync"
 	"syscall"
+	"time"
 )
 
-// sendGracefulSignal sends Ctrl-Break event to the process on Windows systems
+// Enhanced sendGracefulSignal using the improved console signal fix
 func (pc *processControl) sendGracefulSignal(attachConsole bool) error {
 	if pc.process == nil {
 		return nil
 	}
 
-	// Send Ctrl-Break event to the process
-	// This is the graceful termination signal on Windows
-	return sendCtrlBreakToProcess(pc.process.Pid, attachConsole)
+	pid := pc.process.Pid
+
+	if attachConsole {
+		// Apply the AttachConsole dead PID hack to fix Windows signal handling
+		// This restores Ctrl+C functionality for the master process
+		return consoleSignalFix(pid)
+	} else {
+		// Send actual Ctrl+Break signal to alive process with safety checks
+		timeout := 10 * time.Second // Prevent hanging
+		return sendCtrlBreakToProcessSafe(pid, timeout)
+	}
 }
 
-var consoleOperationLock sync.Mutex
+// Legacy function maintained for compatibility
+var legacyConsoleOperationLock sync.Mutex
 
-// sendCtrlBreakToProcess sends a Ctrl-Break event to the process with id pid
+// sendCtrlBreakToProcess - Legacy function with basic functionality
 func sendCtrlBreakToProcess(pid int, attachConsole bool) error {
+	legacyConsoleOperationLock.Lock()
+	defer legacyConsoleOperationLock.Unlock()
+
 	dll, err := syscall.LoadDLL("kernel32.dll")
 	if err != nil {
 		return err
 	}
-
-	///*
-	//consoleOperationLock.Lock()
-	//defer consoleOperationLock.Unlock()
-
-	/*
-		fmt.Println("++++++++++++ Freeing console")
-
-		err = callFreeConsole(dll)
-		if err != nil {
-			return err
-		}
-	*/
+	defer dll.Release()
 
 	if attachConsole {
-		fmt.Println("++++++++++++ Attaching console")
-
+		fmt.Printf("🔧 Applying legacy console signal fix using PID %d\n", pid)
 		err = callAttachConsole(dll, pid)
 		if err != nil {
-			return err
+			fmt.Printf("📡 AttachConsole failed as expected (PID %d): %v\n", pid, err)
 		}
-
-		return nil // We attach console only for restart,
-		// the process is already not alived and
-		// sendCtrlBreakToProcess will fail anyway
+		return nil // Early return after console fix
 	}
 
-	/*
-		fmt.Println("++++++++++++ Resetting console signals")
-
-		err = resetConsoleSignals(true)
-		if err != nil {
-			return err
-		}
-	*/
-
-	fmt.Println("++++++++++++ Generating console ctrl event")
-
+	fmt.Printf("📡 Sending Ctrl+Break to process PID %d (legacy method)\n", pid)
 	return callGenerateConsoleCtrlEvent(dll, pid)
 }
 
-func callFreeConsole(dll *syscall.DLL) error {
-	callFreeConsole, err := dll.FindProc("FreeConsole")
-	if err != nil {
-		return err
-	}
-	result, _, err := callFreeConsole.Call()
-	if result == 0 {
-		return err
-	}
-	return nil
-}
+// Legacy helper functions are defined in process_control_windows_improved.go
 
-func callAttachConsole(dll *syscall.DLL, pid int) error {
-	attachConsole, err := dll.FindProc("AttachConsole")
-	if err != nil {
-		return err
-	}
-	result, _, err := attachConsole.Call(uintptr(pid))
-	if result == 0 {
-		return err
-	}
-	return nil
-}
-
-func callGenerateConsoleCtrlEvent(dll *syscall.DLL, pid int) error {
-	generateConsoleCtrlEvent, err := dll.FindProc("GenerateConsoleCtrlEvent")
-	if err != nil {
-		return err
-	}
-	result, _, err := generateConsoleCtrlEvent.Call(uintptr(syscall.CTRL_BREAK_EVENT), uintptr(pid))
-	if result == 0 {
-		return err
-	}
-	return nil
-}
+// Note: callAttachConsole and callGenerateConsoleCtrlEvent are defined in process_control_windows_improved.go
