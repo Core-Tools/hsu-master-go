@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/core-tools/hsu-master/pkg/errors"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -165,17 +167,21 @@ func TestManagedWorker_ProcessControlOptions(t *testing.T) {
 
 func TestManagedWorker_ExecuteCmd_NilContext(t *testing.T) {
 	logger := &MockManagedLogger{}
+	logger.On("Infof", mock.Anything, mock.Anything).Maybe()
+	logger.On("Debugf", mock.Anything, mock.Anything).Maybe()
+	logger.On("Errorf", mock.Anything, mock.Anything).Maybe()
+
 	unit := createTestManagedUnit()
 
 	worker := NewManagedWorker("test-managed-6", unit, logger).(*managedWorker)
 
-	cmd, stdout, healthCheck, err := worker.ExecuteCmd(nil)
+	process, stdout, healthCheck, err := worker.ExecuteCmd(nil)
 
-	assert.Nil(t, cmd)
+	assert.Nil(t, process)
 	assert.Nil(t, stdout)
 	assert.Nil(t, healthCheck)
 	assert.Error(t, err)
-	assert.True(t, IsValidationError(err))
+	assert.True(t, errors.IsValidationError(err.(*errors.DomainError).Unwrap()))
 }
 
 func TestManagedWorker_ExecuteCmd_ValidContext(t *testing.T) {
@@ -209,7 +215,7 @@ func TestManagedWorker_ExecuteCmd_ValidContext(t *testing.T) {
 		assert.Equal(t, HealthCheckTypeProcess, healthCheck.Type)
 	} else {
 		// If execution fails, error should be properly formatted
-		assert.True(t, IsProcessError(err) || IsValidationError(err) || IsPermissionError(err) || IsIOError(err))
+		assert.True(t, errors.IsProcessError(err) || errors.IsValidationError(err) || errors.IsPermissionError(err) || errors.IsIOError(err))
 	}
 
 	logger.AssertExpectations(t)

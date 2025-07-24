@@ -6,6 +6,7 @@ import (
 	"time"
 
 	coreLogging "github.com/core-tools/hsu-core/pkg/logging"
+	"github.com/core-tools/hsu-master/pkg/errors"
 	"github.com/core-tools/hsu-master/pkg/logging"
 )
 
@@ -15,12 +16,12 @@ func RunWithConfig(configFile string, coreLogger coreLogging.Logger, masterLogge
 	// Load configuration
 	config, err := LoadConfigFromFile(configFile)
 	if err != nil {
-		return NewIOError("failed to load configuration", err).WithContext("config_file", configFile)
+		return errors.NewIOError("failed to load configuration", err).WithContext("config_file", configFile)
 	}
 
 	// Validate configuration
 	if err := ValidateConfig(config); err != nil {
-		return NewValidationError("configuration validation failed", err).WithContext("config_file", configFile)
+		return errors.NewValidationError("configuration validation failed", err).WithContext("config_file", configFile)
 	}
 
 	masterLogger.Infof("Configuration loaded successfully from %s", configFile)
@@ -34,7 +35,7 @@ func RunWithConfig(configFile string, coreLogger coreLogging.Logger, masterLogge
 // This allows programmatic configuration for testing and embedding
 func RunWithConfigStruct(config *MasterConfig, coreLogger coreLogging.Logger, masterLogger logging.Logger) error {
 	if config == nil {
-		return NewValidationError("configuration cannot be nil", nil)
+		return errors.NewValidationError("configuration cannot be nil", nil)
 	}
 
 	masterLogger.Infof("Master runner starting...")
@@ -47,13 +48,13 @@ func RunWithConfigStruct(config *MasterConfig, coreLogger coreLogging.Logger, ma
 	// Create master instance
 	master, err := NewMaster(masterOptions, coreLogger, masterLogger)
 	if err != nil {
-		return NewInternalError("failed to create master", err)
+		return errors.NewInternalError("failed to create master", err)
 	}
 
 	// Create workers from configuration
 	workers, err := CreateWorkersFromConfig(config, masterLogger)
 	if err != nil {
-		return NewValidationError("failed to create workers from configuration", err)
+		return errors.NewValidationError("failed to create workers from configuration", err)
 	}
 
 	masterLogger.Infof("Created %d workers from configuration", len(workers))
@@ -75,7 +76,7 @@ func RunWithConfigStruct(config *MasterConfig, coreLogger coreLogging.Logger, ma
 	for _, worker := range workers {
 		err := master.AddWorker(worker)
 		if err != nil {
-			return NewValidationError(
+			return errors.NewValidationError(
 				fmt.Sprintf("failed to add worker: %s", worker.ID()),
 				err,
 			).WithContext("worker_id", worker.ID())
@@ -143,12 +144,12 @@ func CreateMasterFromConfig(
 	masterLogger logging.Logger,
 ) (*Master, []Worker, error) {
 	if config == nil {
-		return nil, nil, NewValidationError("configuration cannot be nil", nil)
+		return nil, nil, errors.NewValidationError("configuration cannot be nil", nil)
 	}
 
 	// Validate configuration
 	if err := ValidateConfig(config); err != nil {
-		return nil, nil, NewValidationError("configuration validation failed", err)
+		return nil, nil, errors.NewValidationError("configuration validation failed", err)
 	}
 
 	// Create master options from config
@@ -159,13 +160,13 @@ func CreateMasterFromConfig(
 	// Create master instance
 	master, err := NewMaster(masterOptions, coreLogger, masterLogger)
 	if err != nil {
-		return nil, nil, NewInternalError("failed to create master", err)
+		return nil, nil, errors.NewInternalError("failed to create master", err)
 	}
 
 	// Create workers from configuration
 	workers, err := CreateWorkersFromConfig(config, masterLogger)
 	if err != nil {
-		return nil, nil, NewValidationError("failed to create workers from configuration", err)
+		return nil, nil, errors.NewValidationError("failed to create workers from configuration", err)
 	}
 
 	return master, workers, nil
@@ -177,12 +178,12 @@ func ValidateConfigFile(configFile string) error {
 	// Load configuration
 	config, err := LoadConfigFromFile(configFile)
 	if err != nil {
-		return NewIOError("failed to load configuration", err).WithContext("config_file", configFile)
+		return errors.NewIOError("failed to load configuration", err).WithContext("config_file", configFile)
 	}
 
 	// Validate configuration
 	if err := ValidateConfig(config); err != nil {
-		return NewValidationError("configuration validation failed", err).WithContext("config_file", configFile)
+		return errors.NewValidationError("configuration validation failed", err).WithContext("config_file", configFile)
 	}
 
 	return nil

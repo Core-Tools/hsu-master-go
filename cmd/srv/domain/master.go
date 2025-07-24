@@ -10,6 +10,7 @@ import (
 	coreDomain "github.com/core-tools/hsu-core/pkg/domain"
 	coreLogging "github.com/core-tools/hsu-core/pkg/logging"
 	masterControl "github.com/core-tools/hsu-master/pkg/control"
+	"github.com/core-tools/hsu-master/pkg/errors"
 	masterLogging "github.com/core-tools/hsu-master/pkg/logging"
 )
 
@@ -57,7 +58,7 @@ func NewMaster(options MasterOptions, coreLogger coreLogging.Logger, masterLogge
 
 	server, err := coreControl.NewServer(serverOptions, coreLogger)
 	if err != nil {
-		return nil, NewInternalError("failed to create server", err)
+		return nil, errors.NewInternalError("failed to create server", err)
 	}
 
 	// Register core services
@@ -83,20 +84,20 @@ func NewMaster(options MasterOptions, coreLogger coreLogging.Logger, masterLogge
 func (m *Master) AddWorker(worker Worker) error {
 	// Validate input
 	if worker == nil {
-		return NewValidationError("worker cannot be nil", nil)
+		return errors.NewValidationError("worker cannot be nil", nil)
 	}
 
 	id := worker.ID()
 
 	// Validate worker ID
 	if err := ValidateWorkerID(id); err != nil {
-		return NewValidationError("invalid worker ID", err).WithContext("worker_id", id)
+		return errors.NewValidationError("invalid worker ID", err).WithContext("worker_id", id)
 	}
 
 	// Validate worker options
 	options := worker.ProcessControlOptions()
 	if err := ValidateProcessControlOptions(options); err != nil {
-		return NewValidationError("invalid worker process control options", err).WithContext("worker_id", id)
+		return errors.NewValidationError("invalid worker process control options", err).WithContext("worker_id", id)
 	}
 
 	m.logger.Infof("Adding worker, id: %s, can_attach: %t, can_execute: %t, can_terminate: %t, can_restart: %t",
@@ -107,7 +108,7 @@ func (m *Master) AddWorker(worker Worker) error {
 
 	// Check if worker already exists
 	if _, exists := m.workers[id]; exists {
-		return NewConflictError("worker already exists", nil).WithContext("worker_id", id)
+		return errors.NewConflictError("worker already exists", nil).WithContext("worker_id", id)
 	}
 
 	// Create state machine for the worker
@@ -120,7 +121,7 @@ func (m *Master) AddWorker(worker Worker) error {
 
 	// Transition to registered state
 	if err := stateMachine.Transition(WorkerStateRegistered, "add", nil); err != nil {
-		return NewInternalError("failed to transition worker to registered state", err).WithContext("worker_id", id)
+		return errors.NewInternalError("failed to transition worker to registered state", err).WithContext("worker_id", id)
 	}
 
 	// Create worker logger
@@ -147,7 +148,7 @@ func (m *Master) AddWorker(worker Worker) error {
 func (m *Master) RemoveWorker(id string) error {
 	// Validate worker ID
 	if err := ValidateWorkerID(id); err != nil {
-		return NewValidationError("invalid worker ID", err).WithContext("worker_id", id)
+		return errors.NewValidationError("invalid worker ID", err).WithContext("worker_id", id)
 	}
 
 	m.logger.Infof("Removing worker, id: %s", id)
@@ -155,13 +156,13 @@ func (m *Master) RemoveWorker(id string) error {
 	// Get worker and check if it's safely removable
 	workerEntry, _, exists := m.getWorkerAndMasterState(id)
 	if !exists {
-		return NewNotFoundError("worker not found", nil).WithContext("worker_id", id)
+		return errors.NewNotFoundError("worker not found", nil).WithContext("worker_id", id)
 	}
 
 	// Check if worker is in a safe state for removal
 	currentState := workerEntry.StateMachine.GetCurrentState()
 	if !isWorkerSafelyRemovable(currentState) {
-		return NewValidationError(
+		return errors.NewValidationError(
 			fmt.Sprintf("cannot remove worker in state '%s': worker must be stopped before removal", currentState),
 			nil,
 		).WithContext("worker_id", id).
@@ -176,7 +177,7 @@ func (m *Master) RemoveWorker(id string) error {
 
 	// Double-check existence under lock (could have been removed by another goroutine)
 	if _, exists := m.workers[id]; !exists {
-		return NewNotFoundError("worker not found", nil).WithContext("worker_id", id)
+		return errors.NewNotFoundError("worker not found", nil).WithContext("worker_id", id)
 	}
 
 	// Remove worker and state machine
@@ -203,24 +204,24 @@ func isWorkerSafelyRemovable(state WorkerState) bool {
 func (m *Master) StartWorker(ctx context.Context, id string) error {
 	// Validate context
 	if ctx == nil {
-		return NewValidationError("context cannot be nil", nil)
+		return errors.NewValidationError("context cannot be nil", nil)
 	}
 
 	// Validate worker ID
 	if err := ValidateWorkerID(id); err != nil {
-		return NewValidationError("invalid worker ID", err).WithContext("worker_id", id)
+		return errors.NewValidationError("invalid worker ID", err).WithContext("worker_id", id)
 	}
 
 	// Get worker and master state safely
 	workerEntry, currentMasterState, exists := m.getWorkerAndMasterState(id)
 
 	if !exists {
-		return NewNotFoundError("worker not found", nil).WithContext("worker_id", id)
+		return errors.NewNotFoundError("worker not found", nil).WithContext("worker_id", id)
 	}
 
 	// Validate master is running - after worker existence check
 	if currentMasterState != MasterStateRunning {
-		return NewValidationError(
+		return errors.NewValidationError(
 			fmt.Sprintf("master must be running to start workers, current state: %s", currentMasterState),
 			nil,
 		).WithContext("worker_id", id).WithContext("master_state", string(currentMasterState))
@@ -235,7 +236,7 @@ func (m *Master) StartWorker(ctx context.Context, id string) error {
 
 	// 3. Transition to starting state
 	if err := workerEntry.StateMachine.Transition(WorkerStateStarting, "start", nil); err != nil {
-		return NewInternalError("failed to transition worker to starting state", err).WithContext("worker_id", id)
+		return errors.NewInternalError("failed to transition worker to starting state", err).WithContext("worker_id", id)
 	}
 
 	// 4. Start process control (outside of lock, can be long-running)
@@ -253,9 +254,9 @@ func (m *Master) StartWorker(ctx context.Context, id string) error {
 
 		// Check if the error is a context cancellation
 		if ctx.Err() != nil {
-			return NewCancelledError("worker start was cancelled", ctx.Err()).WithContext("worker_id", id)
+			return errors.NewCancelledError("worker start was cancelled", ctx.Err()).WithContext("worker_id", id)
 		}
-		return NewProcessError("failed to start worker", err).WithContext("worker_id", id)
+		return errors.NewProcessError("failed to start worker", err).WithContext("worker_id", id)
 	}
 
 	// 6. Transition to running state on success
@@ -271,24 +272,24 @@ func (m *Master) StartWorker(ctx context.Context, id string) error {
 func (m *Master) StopWorker(ctx context.Context, id string) error {
 	// Validate context
 	if ctx == nil {
-		return NewValidationError("context cannot be nil", nil)
+		return errors.NewValidationError("context cannot be nil", nil)
 	}
 
 	// Validate worker ID
 	if err := ValidateWorkerID(id); err != nil {
-		return NewValidationError("invalid worker ID", err).WithContext("worker_id", id)
+		return errors.NewValidationError("invalid worker ID", err).WithContext("worker_id", id)
 	}
 
 	// Get worker and master state safely
 	workerEntry, currentMasterState, exists := m.getWorkerAndMasterState(id)
 
 	if !exists {
-		return NewNotFoundError("worker not found", nil).WithContext("worker_id", id)
+		return errors.NewNotFoundError("worker not found", nil).WithContext("worker_id", id)
 	}
 
 	// Validate master is running - after worker existence check
 	if currentMasterState != MasterStateRunning {
-		return NewValidationError(
+		return errors.NewValidationError(
 			fmt.Sprintf("master must be running to stop workers, current state: %s", currentMasterState),
 			nil,
 		).WithContext("worker_id", id).WithContext("master_state", string(currentMasterState))
@@ -303,7 +304,7 @@ func (m *Master) StopWorker(ctx context.Context, id string) error {
 
 	// 3. Transition to stopping state
 	if err := workerEntry.StateMachine.Transition(WorkerStateStopping, "stop", nil); err != nil {
-		return NewInternalError("failed to transition worker to stopping state", err).WithContext("worker_id", id)
+		return errors.NewInternalError("failed to transition worker to stopping state", err).WithContext("worker_id", id)
 	}
 
 	// 4. Stop process control (outside of lock, can be long-running)
@@ -321,9 +322,9 @@ func (m *Master) StopWorker(ctx context.Context, id string) error {
 
 		// Check if the error is a context cancellation
 		if ctx.Err() != nil {
-			return NewCancelledError("worker stop was cancelled", ctx.Err()).WithContext("worker_id", id)
+			return errors.NewCancelledError("worker stop was cancelled", ctx.Err()).WithContext("worker_id", id)
 		}
-		return NewProcessError("failed to stop worker", err).WithContext("worker_id", id)
+		return errors.NewProcessError("failed to stop worker", err).WithContext("worker_id", id)
 	}
 
 	// 6. Transition to stopped state on success
@@ -397,13 +398,13 @@ func (m *Master) GetAllWorkerStates() map[string]WorkerStateInfo {
 func (m *Master) GetWorkerState(id string) (WorkerState, error) {
 	// Validate worker ID
 	if err := ValidateWorkerID(id); err != nil {
-		return WorkerStateUnknown, NewValidationError("invalid worker ID", err).WithContext("worker_id", id)
+		return WorkerStateUnknown, errors.NewValidationError("invalid worker ID", err).WithContext("worker_id", id)
 	}
 
 	workerEntry, _, exists := m.getWorkerAndMasterState(id)
 
 	if !exists {
-		return WorkerStateUnknown, NewNotFoundError("worker not found", nil).WithContext("worker_id", id)
+		return WorkerStateUnknown, errors.NewNotFoundError("worker not found", nil).WithContext("worker_id", id)
 	}
 
 	return workerEntry.StateMachine.GetCurrentState(), nil
@@ -413,13 +414,13 @@ func (m *Master) GetWorkerState(id string) (WorkerState, error) {
 func (m *Master) GetWorkerStateInfo(id string) (WorkerStateInfo, error) {
 	// Validate worker ID
 	if err := ValidateWorkerID(id); err != nil {
-		return WorkerStateInfo{}, NewValidationError("invalid worker ID", err).WithContext("worker_id", id)
+		return WorkerStateInfo{}, errors.NewValidationError("invalid worker ID", err).WithContext("worker_id", id)
 	}
 
 	workerEntry, _, exists := m.getWorkerAndMasterState(id)
 
 	if !exists {
-		return WorkerStateInfo{}, NewNotFoundError("worker not found", nil).WithContext("worker_id", id)
+		return WorkerStateInfo{}, errors.NewNotFoundError("worker not found", nil).WithContext("worker_id", id)
 	}
 
 	return workerEntry.StateMachine.GetStateInfo(), nil
@@ -429,13 +430,13 @@ func (m *Master) GetWorkerStateInfo(id string) (WorkerStateInfo, error) {
 func (m *Master) IsWorkerOperationAllowed(id string, operation string) (bool, error) {
 	// Validate worker ID
 	if err := ValidateWorkerID(id); err != nil {
-		return false, NewValidationError("invalid worker ID", err).WithContext("worker_id", id)
+		return false, errors.NewValidationError("invalid worker ID", err).WithContext("worker_id", id)
 	}
 
 	workerEntry, _, exists := m.getWorkerAndMasterState(id)
 
 	if !exists {
-		return false, NewNotFoundError("worker not found", nil).WithContext("worker_id", id)
+		return false, errors.NewNotFoundError("worker not found", nil).WithContext("worker_id", id)
 	}
 
 	return workerEntry.StateMachine.IsOperationAllowed(operation), nil
@@ -455,13 +456,13 @@ func (m *Master) stopProcessControls(ctx context.Context) {
 	workerEntriesCopy := m.getAllWorkers()
 
 	// 2. Stop processes outside of lock
-	errorCollection := NewErrorCollection()
+	errorCollection := errors.NewErrorCollection()
 	for id, workerEntry := range workerEntriesCopy {
 		err := workerEntry.ProcessControl.Stop(ctx)
 		if err != nil {
 			m.logger.Errorf("Failed to stop process control, id: %s, error: %v", id, err)
 			// Add context to the error for better debugging
-			contextualErr := NewProcessError("failed to stop process control", err).WithContext("worker_id", id)
+			contextualErr := errors.NewProcessError("failed to stop process control", err).WithContext("worker_id", id)
 			errorCollection.Add(contextualErr)
 		}
 	}

@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/core-tools/hsu-master/pkg/errors"
+
 	"github.com/stretchr/testify/assert"
 )
 
@@ -13,15 +15,15 @@ func TestValidateWorkerID(t *testing.T) {
 		name      string
 		id        string
 		shouldErr bool
-		errorType ErrorType
+		errorType errors.ErrorType
 	}{
 		{"valid_simple", "worker-1", false, ""},
 		{"valid_with_underscore", "worker_1", false, ""},
 		{"valid_alphanumeric", "worker123", false, ""},
-		{"empty_id", "", true, ErrorTypeValidation},
-		{"too_long", "a" + string(make([]byte, 65)), true, ErrorTypeValidation},
-		{"invalid_chars", "worker@1", true, ErrorTypeValidation},
-		{"invalid_space", "worker 1", true, ErrorTypeValidation},
+		{"empty_id", "", true, errors.ErrorTypeValidation},
+		{"too_long", "a" + string(make([]byte, 65)), true, errors.ErrorTypeValidation},
+		{"invalid_chars", "worker@1", true, errors.ErrorTypeValidation},
+		{"invalid_space", "worker 1", true, errors.ErrorTypeValidation},
 	}
 
 	for _, tt := range tests {
@@ -30,7 +32,7 @@ func TestValidateWorkerID(t *testing.T) {
 
 			if tt.shouldErr {
 				assert.Error(t, err)
-				var domainErr *DomainError
+				var domainErr *errors.DomainError
 				assert.ErrorAs(t, err, &domainErr)
 				assert.Equal(t, tt.errorType, domainErr.Type)
 			} else {
@@ -147,7 +149,7 @@ func TestValidateDiscoveryConfig(t *testing.T) {
 
 			if tt.shouldErr {
 				assert.Error(t, err)
-				assert.True(t, IsValidationError(err))
+				assert.True(t, errors.IsValidationError(err))
 			} else {
 				assert.NoError(t, err)
 			}
@@ -219,7 +221,7 @@ func TestValidateRestartConfig(t *testing.T) {
 
 			if tt.shouldErr {
 				assert.Error(t, err)
-				assert.True(t, IsValidationError(err))
+				assert.True(t, errors.IsValidationError(err))
 			} else {
 				assert.NoError(t, err)
 			}
@@ -247,7 +249,7 @@ func TestValidatePID(t *testing.T) {
 
 			if tt.shouldErr {
 				assert.Error(t, err)
-				assert.True(t, IsValidationError(err))
+				assert.True(t, errors.IsValidationError(err))
 			} else {
 				assert.NoError(t, err)
 				assert.Equal(t, tt.expectedPID, pid)
@@ -276,7 +278,7 @@ func TestValidatePort(t *testing.T) {
 
 			if tt.shouldErr {
 				assert.Error(t, err)
-				assert.True(t, IsValidationError(err))
+				assert.True(t, errors.IsValidationError(err))
 			} else {
 				assert.NoError(t, err)
 			}
@@ -306,7 +308,7 @@ func TestValidateNetworkAddress(t *testing.T) {
 
 			if tt.shouldErr {
 				assert.Error(t, err)
-				assert.True(t, IsValidationError(err))
+				assert.True(t, errors.IsValidationError(err))
 			} else {
 				assert.NoError(t, err)
 			}
@@ -331,7 +333,7 @@ func TestValidateTimeout(t *testing.T) {
 
 			if tt.shouldErr {
 				assert.Error(t, err)
-				assert.True(t, IsValidationError(err))
+				assert.True(t, errors.IsValidationError(err))
 			} else {
 				assert.NoError(t, err)
 			}

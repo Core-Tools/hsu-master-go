@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/core-tools/hsu-master/pkg/errors"
 	"github.com/core-tools/hsu-master/pkg/logging"
 )
 
@@ -136,7 +137,7 @@ func (wsm *WorkerStateMachine) Transition(to WorkerState, operation string, err 
 
 	// Validate transition
 	if !wsm.canTransitionUnsafe(to) {
-		return NewValidationError(
+		return errors.NewValidationError(
 			fmt.Sprintf("invalid state transition from %s to %s for operation %s", from, to, operation),
 			nil,
 		).WithContext("worker_id", wsm.workerID).WithContext("current_state", string(from)).WithContext("target_state", string(to))
@@ -260,7 +261,7 @@ func (wsm *WorkerStateMachine) ValidateOperation(operation string) error {
 	}
 
 	currentState := wsm.GetCurrentState()
-	return NewValidationError(
+	return errors.NewValidationError(
 		fmt.Sprintf("operation '%s' not allowed in current state '%s'", operation, currentState),
 		nil,
 	).WithContext("worker_id", wsm.workerID).WithContext("current_state", string(currentState)).WithContext("operation", operation)

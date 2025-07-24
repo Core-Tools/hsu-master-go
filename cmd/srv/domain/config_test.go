@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/core-tools/hsu-master/pkg/errors"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -522,5 +524,5 @@ workers:
 	// Test with non-existent file
 	err = ValidateConfigFile("/non/existent/file.yaml")
 	assert.Error(t, err)
-	assert.True(t, IsIOError(err))
+	assert.True(t, errors.IsIOError(err))
 }

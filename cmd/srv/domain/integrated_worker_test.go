@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/core-tools/hsu-master/pkg/errors"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -163,17 +165,21 @@ func TestIntegratedWorker_ProcessControlOptions(t *testing.T) {
 
 func TestIntegratedWorker_ExecuteCmd_NilContext(t *testing.T) {
 	logger := &MockIntegratedLogger{}
+	logger.On("Infof", mock.Anything, mock.Anything).Maybe()
+	logger.On("Debugf", mock.Anything, mock.Anything).Maybe()
+	logger.On("Errorf", mock.Anything, mock.Anything).Maybe()
+
 	unit := createTestIntegratedUnit()
 
 	worker := NewIntegratedWorker("test-integrated-5", unit, logger).(*integratedWorker)
 
-	cmd, stdout, healthCheck, err := worker.ExecuteCmd(nil)
+	process, stdout, healthCheck, err := worker.ExecuteCmd(nil)
 
-	assert.Nil(t, cmd)
+	assert.Nil(t, process)
 	assert.Nil(t, stdout)
 	assert.Nil(t, healthCheck)
 	assert.Error(t, err)
-	assert.True(t, IsValidationError(err))
+	assert.True(t, errors.IsValidationError(err.(*errors.DomainError).Unwrap()))
 	assert.Contains(t, err.Error(), "context cannot be nil")
 }
 
@@ -217,7 +223,7 @@ func TestIntegratedWorker_ExecuteCmd_ValidContext(t *testing.T) {
 		assert.Equal(t, unit.HealthCheckRunOptions, healthCheck.RunOptions)
 	} else {
 		// If execution fails, error should be properly formatted
-		assert.True(t, IsProcessError(err) || IsValidationError(err) || IsPermissionError(err) || IsIOError(err) || IsNetworkError(err))
+		assert.True(t, errors.IsProcessError(err) || errors.IsValidationError(err) || errors.IsPermissionError(err) || errors.IsIOError(err) || errors.IsNetworkError(err))
 	}
 
 	logger.AssertExpectations(t)

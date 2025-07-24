@@ -5,7 +5,9 @@ import (
 	"io/ioutil"
 	"time"
 
+	"github.com/core-tools/hsu-master/pkg/errors"
 	"github.com/core-tools/hsu-master/pkg/logging"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -51,17 +53,17 @@ type WorkerUnitConfig struct {
 func LoadConfigFromFile(filename string) (*MasterConfig, error) {
 	data, err := ioutil.ReadFile(filename)
 	if err != nil {
-		return nil, NewIOError("failed to read configuration file", err).WithContext("filename", filename)
+		return nil, errors.NewIOError("failed to read configuration file", err).WithContext("filename", filename)
 	}
 
 	var config MasterConfig
 	if err := yaml.Unmarshal(data, &config); err != nil {
-		return nil, NewValidationError("failed to parse YAML configuration", err).WithContext("filename", filename)
+		return nil, errors.NewValidationError("failed to parse YAML configuration", err).WithContext("filename", filename)
 	}
 
 	// Set defaults
 	if err := setConfigDefaults(&config); err != nil {
-		return nil, NewValidationError("failed to apply configuration defaults", err)
+		return nil, errors.NewValidationError("failed to apply configuration defaults", err)
 	}
 
 	return &config, nil
@@ -70,17 +72,17 @@ func LoadConfigFromFile(filename string) (*MasterConfig, error) {
 // ValidateConfig validates the entire configuration structure
 func ValidateConfig(config *MasterConfig) error {
 	if config == nil {
-		return NewValidationError("configuration cannot be nil", nil)
+		return errors.NewValidationError("configuration cannot be nil", nil)
 	}
 
 	// Validate master configuration
 	if err := validateMasterConfig(&config.Master); err != nil {
-		return NewValidationError("invalid master configuration", err)
+		return errors.NewValidationError("invalid master configuration", err)
 	}
 
 	// Validate workers
 	if err := validateWorkersConfig(config.Workers); err != nil {
-		return NewValidationError("invalid workers configuration", err)
+		return errors.NewValidationError("invalid workers configuration", err)
 	}
 
 	return nil
@@ -89,7 +91,7 @@ func ValidateConfig(config *MasterConfig) error {
 // CreateWorkersFromConfig creates worker instances from configuration
 func CreateWorkersFromConfig(config *MasterConfig, logger logging.Logger) ([]Worker, error) {
 	if config == nil {
-		return nil, NewValidationError("configuration cannot be nil", nil)
+		return nil, errors.NewValidationError("configuration cannot be nil", nil)
 	}
 
 	var workers []Worker
@@ -103,7 +105,7 @@ func CreateWorkersFromConfig(config *MasterConfig, logger logging.Logger) ([]Wor
 
 		worker, err := createWorkerFromConfig(workerConfig, logger)
 		if err != nil {
-			return nil, NewValidationError(
+			return nil, errors.NewValidationError(
 				fmt.Sprintf("failed to create worker at index %d", i),
 				err,
 			).WithContext("worker_id", workerConfig.ID).WithContext("worker_index", fmt.Sprintf("%d", i))
@@ -120,24 +122,24 @@ func createWorkerFromConfig(config WorkerConfig, logger logging.Logger) (Worker,
 	switch config.Type {
 	case WorkerTypeManaged:
 		if config.Unit.Managed == nil {
-			return nil, NewValidationError("managed unit configuration is required for managed worker", nil)
+			return nil, errors.NewValidationError("managed unit configuration is required for managed worker", nil)
 		}
 		return NewManagedWorker(config.ID, config.Unit.Managed, logger), nil
 
 	case WorkerTypeUnmanaged:
 		if config.Unit.Unmanaged == nil {
-			return nil, NewValidationError("unmanaged unit configuration is required for unmanaged worker", nil)
+			return nil, errors.NewValidationError("unmanaged unit configuration is required for unmanaged worker", nil)
 		}
 		return NewUnmanagedWorker(config.ID, config.Unit.Unmanaged, logger), nil
 
 	case WorkerTypeIntegrated:
 		if config.Unit.Integrated == nil {
-			return nil, NewValidationError("integrated unit configuration is required for integrated worker", nil)
+			return nil, errors.NewValidationError("integrated unit configuration is required for integrated worker", nil)
 		}
 		return NewIntegratedWorker(config.ID, config.Unit.Integrated, logger), nil
 
 	default:
-		return nil, NewValidationError(
+		return nil, errors.NewValidationError(
 			fmt.Sprintf("unsupported worker type: %s", config.Type),
 			nil,
 		).WithContext("supported_types", "managed, unmanaged, integrated")
@@ -248,7 +250,7 @@ func setIntegratedUnitDefaults(config *IntegratedUnit) error {
 
 func validateMasterConfig(config *MasterConfigOptions) error {
 	if config.Port <= 0 || config.Port > 65535 {
-		return NewValidationError(
+		return errors.NewValidationError(
 			fmt.Sprintf("invalid port number: %d", config.Port),
 			nil,
 		).WithContext("valid_range", "1-65535")
@@ -264,7 +266,7 @@ func validateMasterConfig(config *MasterConfigOptions) error {
 			}
 		}
 		if !valid {
-			return NewValidationError(
+			return errors.NewValidationError(
 				fmt.Sprintf("invalid log level: %s", config.LogLevel),
 				nil,
 			).WithContext("valid_levels", "debug, info, warn, error")
@@ -283,14 +285,14 @@ func validateWorkersConfig(workers []WorkerConfig) error {
 	seenIDs := make(map[string]int)
 	for i, worker := range workers {
 		if err := ValidateWorkerID(worker.ID); err != nil {
-			return NewValidationError(
+			return errors.NewValidationError(
 				fmt.Sprintf("invalid worker ID at index %d", i),
 				err,
 			).WithContext("worker_id", worker.ID)
 		}
 
 		if prevIndex, exists := seenIDs[worker.ID]; exists {
-			return NewValidationError(
+			return errors.NewValidationError(
 				fmt.Sprintf("duplicate worker ID '%s' found at indices %d and %d", worker.ID, prevIndex, i),
 				nil,
 			)
@@ -299,7 +301,7 @@ func validateWorkersConfig(workers []WorkerConfig) error {
 
 		// Validate worker type
 		if err := validateWorkerType(worker.Type); err != nil {
-			return NewValidationError(
+			return errors.NewValidationError(
 				fmt.Sprintf("invalid worker type at index %d", i),
 				err,
 			).WithContext("worker_id", worker.ID)
@@ -307,7 +309,7 @@ func validateWorkersConfig(workers []WorkerConfig) error {
 
 		// Validate unit configuration matches type
 		if err := validateWorkerUnitConfig(worker.Type, worker.Unit); err != nil {
-			return NewValidationError(
+			return errors.NewValidationError(
 				fmt.Sprintf("invalid unit configuration for worker at index %d", i),
 				err,
 			).WithContext("worker_id", worker.ID).WithContext("worker_type", string(worker.Type))
@@ -325,7 +327,7 @@ func validateWorkerType(workerType WorkerType) error {
 		}
 	}
 
-	return NewValidationError(
+	return errors.NewValidationError(
 		fmt.Sprintf("unsupported worker type: %s", workerType),
 		nil,
 	).WithContext("supported_types", "managed, unmanaged, integrated")
@@ -335,45 +337,45 @@ func validateWorkerUnitConfig(workerType WorkerType, unitConfig WorkerUnitConfig
 	switch workerType {
 	case WorkerTypeManaged:
 		if unitConfig.Managed == nil {
-			return NewValidationError("managed unit configuration is required for managed worker", nil)
+			return errors.NewValidationError("managed unit configuration is required for managed worker", nil)
 		}
 		if unitConfig.Unmanaged != nil || unitConfig.Integrated != nil {
-			return NewValidationError("only managed unit configuration should be specified for managed worker", nil)
+			return errors.NewValidationError("only managed unit configuration should be specified for managed worker", nil)
 		}
 		return validateManagedUnit(*unitConfig.Managed)
 
 	case WorkerTypeUnmanaged:
 		if unitConfig.Unmanaged == nil {
-			return NewValidationError("unmanaged unit configuration is required for unmanaged worker", nil)
+			return errors.NewValidationError("unmanaged unit configuration is required for unmanaged worker", nil)
 		}
 		if unitConfig.Managed != nil || unitConfig.Integrated != nil {
-			return NewValidationError("only unmanaged unit configuration should be specified for unmanaged worker", nil)
+			return errors.NewValidationError("only unmanaged unit configuration should be specified for unmanaged worker", nil)
 		}
 		return validateUnmanagedUnit(*unitConfig.Unmanaged)
 
 	case WorkerTypeIntegrated:
 		if unitConfig.Integrated == nil {
-			return NewValidationError("integrated unit configuration is required for integrated worker", nil)
+			return errors.NewValidationError("integrated unit configuration is required for integrated worker", nil)
 		}
 		if unitConfig.Managed != nil || unitConfig.Unmanaged != nil {
-			return NewValidationError("only integrated unit configuration should be specified for integrated worker", nil)
+			return errors.NewValidationError("only integrated unit configuration should be specified for integrated worker", nil)
 		}
 		return validateIntegratedUnit(*unitConfig.Integrated)
 
 	default:
-		return NewValidationError(fmt.Sprintf("unsupported worker type: %s", workerType), nil)
+		return errors.NewValidationError(fmt.Sprintf("unsupported worker type: %s", workerType), nil)
 	}
 }
 
 func validateManagedUnit(config ManagedUnit) error {
 	// Validate metadata
 	if config.Metadata.Name == "" {
-		return NewValidationError("unit name is required", nil)
+		return errors.NewValidationError("unit name is required", nil)
 	}
 
 	// Validate execution config
 	if config.Control.Execution.ExecutablePath == "" {
-		return NewValidationError("executable path is required for managed worker", nil)
+		return errors.NewValidationError("executable path is required for managed worker", nil)
 	}
 
 	// Additional validation using existing functions
@@ -397,7 +399,7 @@ func validateManagedUnit(config ManagedUnit) error {
 func validateUnmanagedUnit(config UnmanagedUnit) error {
 	// Validate metadata
 	if config.Metadata.Name == "" {
-		return NewValidationError("unit name is required", nil)
+		return errors.NewValidationError("unit name is required", nil)
 	}
 
 	// Validate discovery config
@@ -418,12 +420,12 @@ func validateUnmanagedUnit(config UnmanagedUnit) error {
 func validateIntegratedUnit(config IntegratedUnit) error {
 	// Validate metadata
 	if config.Metadata.Name == "" {
-		return NewValidationError("unit name is required", nil)
+		return errors.NewValidationError("unit name is required", nil)
 	}
 
 	// Validate execution config
 	if config.Control.Execution.ExecutablePath == "" {
-		return NewValidationError("executable path is required for integrated worker", nil)
+		return errors.NewValidationError("executable path is required for integrated worker", nil)
 	}
 
 	// Additional validation

@@ -8,7 +8,9 @@ import (
 	"os"
 	"time"
 
+	"github.com/core-tools/hsu-master/pkg/errors"
 	"github.com/core-tools/hsu-master/pkg/logging"
+	"github.com/core-tools/hsu-master/pkg/process"
 )
 
 type integratedWorker struct {
@@ -63,10 +65,11 @@ func (w *integratedWorker) ProcessControlOptions() ProcessControlOptions {
 
 // AttachCmd creates a dynamic gRPC health check configuration by reading the port file
 func (w *integratedWorker) AttachCmd(ctx context.Context) (*os.Process, io.ReadCloser, *HealthCheckConfig, error) {
-	w.logger.Infof("Executing integrated worker attach command, id: %s", w.id)
+	w.logger.Infof("Attaching to integrated worker, id: %s", w.id)
+
+	pidFile := w.pidManager.GeneratePIDFilePath(w.id)
 
 	// Use standard attachment to discover the process
-	pidFile := w.pidManager.GeneratePIDFilePath(w.id)
 	discovery := DiscoveryConfig{
 		Method:        DiscoveryMethodPIDFile,
 		PIDFile:       pidFile,
@@ -87,47 +90,47 @@ func (w *integratedWorker) AttachCmd(ctx context.Context) (*os.Process, io.ReadC
 
 	portStr := fmt.Sprintf("%d", port)
 
-	// Create dynamic gRPC health check configuration
-	healthCheckConfig := &HealthCheckConfig{
-		Type: HealthCheckTypeGRPC,
-		GRPC: GRPCHealthCheckConfig{
-			Address: "localhost:" + portStr,
-			Service: "CoreService",
-			Method:  "Ping",
-		},
-		RunOptions: w.healthCheckRunOptions,
-	}
+	healthCheck := w.newDynamicHealthCheckConfig(portStr, process.Pid)
 
-	w.logger.Infof("Created dynamic gRPC health check for attached process %d: %s", process.Pid, healthCheckConfig.GRPC.Address)
+	w.logger.Infof("Integrated worker attached successfully, id: %s, PID: %d", w.id, process.Pid)
 
-	return process, stdout, healthCheckConfig, nil
+	return process, stdout, healthCheck, nil
 }
 
 func (w *integratedWorker) ExecuteCmd(ctx context.Context) (*os.Process, io.ReadCloser, *HealthCheckConfig, error) {
-	// Validate context
-	if ctx == nil {
-		return nil, nil, nil, NewValidationError("context cannot be nil", nil)
-	}
-
 	w.logger.Infof("Executing integrated worker command, id: %s", w.id)
 
 	execution := w.processControlConfig.Execution
 
+	// Validate health check configuration
+	if err := ValidateExecutionConfig(execution); err != nil {
+		w.logger.Errorf("Integrated worker execution configuration validation failed, id: %s, error: %v", w.id, err)
+		return nil, nil, nil, errors.NewValidationError("invalid execution configuration", err).WithContext("id", w.id)
+	}
+
 	// Get a free port for the gRPC server
 	port, err := getFreePort()
 	if err != nil {
-		return nil, nil, nil, NewNetworkError("failed to get free port", err)
+		return nil, nil, nil, errors.NewNetworkError("failed to get free port", err)
 	}
 	portStr := fmt.Sprintf("%d", port)
 
 	w.logger.Infof("Got free port, port: %d", port)
 
-	execution.Args = append(execution.Args, "--port", portStr)
+	processExecution := process.ExecutionConfig{
+		ExecutablePath:   execution.ExecutablePath,
+		Args:             execution.Args,
+		Environment:      execution.Environment,
+		WorkingDirectory: execution.WorkingDirectory,
+		WaitDelay:        execution.WaitDelay,
+	}
 
-	stdCmd := NewStdExecuteCmd(execution, w.id, w.logger)
-	process, stdout, err := stdCmd(ctx)
+	processExecution.Args = append(processExecution.Args, "--port", portStr)
+
+	stdExecuteCmd := process.NewStdExecuteCmd(processExecution, w.id, w.logger)
+	process, stdout, err := stdExecuteCmd(ctx)
 	if err != nil {
-		return nil, nil, nil, NewProcessError("failed to execute command", err).WithContext("port", port)
+		return nil, nil, nil, errors.NewProcessError("failed to execute command", err).WithContext("port", port)
 	}
 
 	// Write PID file
@@ -148,6 +151,14 @@ func (w *integratedWorker) ExecuteCmd(ctx context.Context) (*os.Process, io.Read
 		w.logger.Infof("Port file written for worker %s: %s (port: %d)", w.id, portFile, port)
 	}
 
+	healthCheck := w.newDynamicHealthCheckConfig(portStr, process.Pid)
+
+	w.logger.Infof("Integrated worker executed successfully, id: %s, PID: %d", w.id, process.Pid)
+
+	return process, stdout, healthCheck, nil
+}
+
+func (w *integratedWorker) newDynamicHealthCheckConfig(portStr string, pid int) *HealthCheckConfig {
 	healthCheckConfig := &HealthCheckConfig{
 		Type: HealthCheckTypeGRPC,
 		GRPC: GRPCHealthCheckConfig{
@@ -158,18 +169,20 @@ func (w *integratedWorker) ExecuteCmd(ctx context.Context) (*os.Process, io.Read
 		RunOptions: w.healthCheckRunOptions,
 	}
 
-	return process, stdout, healthCheckConfig, nil
+	w.logger.Infof("Created dynamic gRPC health check for executed process %d: %v", pid, healthCheckConfig)
+
+	return healthCheckConfig
 }
 
 func getFreePort() (int, error) {
 	addr, err := net.ResolveTCPAddr("tcp", "localhost:0")
 	if err != nil {
-		return 0, NewNetworkError("failed to resolve TCP address", err)
+		return 0, errors.NewNetworkError("failed to resolve TCP address", err)
 	}
 
 	l, err := net.ListenTCP("tcp", addr)
 	if err != nil {
-		return 0, NewNetworkError("failed to listen on TCP address", err)
+		return 0, errors.NewNetworkError("failed to listen on TCP address", err)
 	}
 	defer l.Close()
 	return l.Addr().(*net.TCPAddr).Port, nil

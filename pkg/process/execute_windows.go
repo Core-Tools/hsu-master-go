@@ -1,6 +1,6 @@
 //go:build windows
 
-package domain
+package process
 
 import (
 	"os/exec"

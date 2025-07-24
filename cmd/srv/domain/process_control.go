@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/core-tools/hsu-master/pkg/errors"
 	"github.com/core-tools/hsu-master/pkg/logging"
 )
 
@@ -25,6 +26,41 @@ type SystemProcessControlConfig struct {
 
 	// Graceful shutdown
 	GracefulTimeout time.Duration `yaml:"graceful_timeout,omitempty"` // Time to wait for graceful shutdown
+}
+
+type ManagedProcessControlConfig struct {
+	// Process execution
+	Execution ExecutionConfig `yaml:"execution"`
+
+	// PID file configuration (optional)
+	ProcessFile *ProcessFileConfig `yaml:"process_file,omitempty"`
+
+	// Process restart
+	Restart RestartConfig `yaml:"restart"`
+
+	// Resource management
+	Limits ResourceLimits `yaml:"limits,omitempty"`
+
+	/*
+		// I/O handling
+		LogConfig      LogConfig
+		StdoutRedirect string
+		StderrRedirect string
+
+		// Scheduling
+		Schedule ScheduleConfig
+	*/
+
+	// Graceful shutdown
+	GracefulTimeout time.Duration `yaml:"graceful_timeout,omitempty"` // Time to wait for graceful shutdown
+}
+
+type ExecutionConfig struct {
+	ExecutablePath   string        `yaml:"executable_path"`
+	Args             []string      `yaml:"args,omitempty"`
+	Environment      []string      `yaml:"environment,omitempty"`
+	WorkingDirectory string        `yaml:"working_directory,omitempty"`
+	WaitDelay        time.Duration `yaml:"wait_delay,omitempty"`
 }
 
 type RestartPolicy string
@@ -63,33 +99,6 @@ type ResourceLimits struct {
 	IOWeight   int   `yaml:"io_weight,omitempty"`    // I/O priority weight
 	IOReadBPS  int64 `yaml:"io_read_bps,omitempty"`  // Read bandwidth limit
 	IOWriteBPS int64 `yaml:"io_write_bps,omitempty"` // Write bandwidth limit
-}
-
-type ManagedProcessControlConfig struct {
-	// Process execution
-	Execution ExecutionConfig `yaml:"execution"`
-
-	// PID file configuration (optional)
-	ProcessFile *ProcessFileConfig `yaml:"process_file,omitempty"`
-
-	// Process restart
-	Restart RestartConfig `yaml:"restart"`
-
-	// Resource management
-	Limits ResourceLimits `yaml:"limits,omitempty"`
-
-	/*
-		// I/O handling
-		LogConfig      LogConfig
-		StdoutRedirect string
-		StderrRedirect string
-
-		// Scheduling
-		Schedule ScheduleConfig
-	*/
-
-	// Graceful shutdown
-	GracefulTimeout time.Duration `yaml:"graceful_timeout,omitempty"` // Time to wait for graceful shutdown
 }
 
 type DiscoveryMethod string
@@ -201,7 +210,7 @@ func (pc *processControl) Stdout() io.ReadCloser {
 func (pc *processControl) Start(ctx context.Context) error {
 	// Validate context
 	if ctx == nil {
-		return NewValidationError("context cannot be nil", nil)
+		return errors.NewValidationError("context cannot be nil", nil)
 	}
 
 	return pc.startInternal(ctx)
@@ -210,11 +219,11 @@ func (pc *processControl) Start(ctx context.Context) error {
 func (pc *processControl) Stop(ctx context.Context) error {
 	// Validate context
 	if ctx == nil {
-		return NewValidationError("context cannot be nil", nil)
+		return errors.NewValidationError("context cannot be nil", nil)
 	}
 
 	if pc.process == nil {
-		return NewProcessError("process not attached", nil)
+		return errors.NewProcessError("process not attached", nil)
 	}
 
 	return pc.stopInternal(ctx, false)
@@ -223,11 +232,11 @@ func (pc *processControl) Stop(ctx context.Context) error {
 func (pc *processControl) Restart(ctx context.Context) error {
 	// Validate context
 	if ctx == nil {
-		return NewValidationError("context cannot be nil", nil)
+		return errors.NewValidationError("context cannot be nil", nil)
 	}
 
 	if pc.process == nil {
-		return NewProcessError("process not attached", nil)
+		return errors.NewProcessError("process not attached", nil)
 	}
 
 	return pc.restartInternal(ctx)
@@ -263,7 +272,7 @@ func (pc *processControl) startInternal(ctx context.Context) error {
 
 		process, stdout, healthCheckConfig, err = executeCmd(ctx)
 		if err != nil {
-			return NewProcessError("failed to start process", err)
+			return errors.NewProcessError("failed to start process", err)
 		}
 
 		pc.logger.Infof("New process started successfully, worker: %s, PID: %d", pc.workerID, process.Pid)
@@ -275,12 +284,12 @@ func (pc *processControl) startInternal(ctx context.Context) error {
 		if process != nil {
 			process.Kill()
 		}
-		return NewCancelledError("startup cancelled", ctx.Err())
+		return errors.NewCancelledError("startup cancelled", ctx.Err())
 	}
 
 	// Validate that we have a process
 	if process == nil {
-		return NewInternalError("no process available after startup", nil)
+		return errors.NewInternalError("no process available after startup", nil)
 	}
 
 	pc.logger.Infof("Process control started, process: %+v, stdout: %+v", process, stdout) // Removed state logging
@@ -423,7 +432,7 @@ func (pc *processControl) stopInternal(ctx context.Context, idDeadPID bool) erro
 	// 3. Terminate the process gracefully with context
 	if err := pc.terminateProcess(ctx, idDeadPID); err != nil {
 		pc.logger.Errorf("Failed to terminate process: %v", err)
-		return NewProcessError("failed to terminate process", err)
+		return errors.NewProcessError("failed to terminate process", err)
 	}
 
 	// 4. Clean up process references
@@ -470,7 +479,7 @@ func (pc *processControl) resetCircuitBreaker() {
 // terminateProcess handles graceful process termination with timeout and context cancellation
 func (pc *processControl) terminateProcess(ctx context.Context, idDeadPID bool) error {
 	if pc.process == nil {
-		return NewProcessError("no process to terminate", nil)
+		return errors.NewProcessError("no process to terminate", nil)
 	}
 
 	pid := pc.process.Pid
@@ -489,7 +498,7 @@ func (pc *processControl) terminateProcess(ctx context.Context, idDeadPID bool) 
 	go func() {
 		state, err := pc.process.Wait()
 		if err != nil {
-			done <- NewProcessError("process wait failed", err).WithContext("pid", pid)
+			done <- errors.NewProcessError("process wait failed", err).WithContext("pid", pid)
 		} else {
 			pc.logger.Infof("Process PID %d exited with status: %v", pid, state)
 			done <- nil
@@ -511,7 +520,7 @@ func (pc *processControl) terminateProcess(ctx context.Context, idDeadPID bool) 
 	select {
 	case err := <-done:
 		if err != nil {
-			return NewProcessError("process termination failed", err).WithContext("pid", pid)
+			return errors.NewProcessError("process termination failed", err).WithContext("pid", pid)
 		}
 		pc.logger.Infof("Process PID %d terminated gracefully", pid)
 		return nil
@@ -526,21 +535,21 @@ func (pc *processControl) terminateProcess(ctx context.Context, idDeadPID bool) 
 
 	// Use Kill() which sends SIGKILL on Unix and TerminateProcess on Windows
 	if err := pc.process.Kill(); err != nil {
-		return NewProcessError("failed to kill process", err).WithContext("pid", pid)
+		return errors.NewProcessError("failed to kill process", err).WithContext("pid", pid)
 	}
 
 	// Wait for forced termination (with shorter timeout) or context cancellation
 	select {
 	case err := <-done:
 		if err != nil {
-			return NewProcessError("forced termination failed", err).WithContext("pid", pid)
+			return errors.NewProcessError("forced termination failed", err).WithContext("pid", pid)
 		}
 		pc.logger.Infof("Process PID %d force terminated", pid)
 		return nil
 	case <-time.After(5 * time.Second):
-		return NewTimeoutError("process did not terminate even after force termination", nil).WithContext("pid", pid)
+		return errors.NewTimeoutError("process did not terminate even after force termination", nil).WithContext("pid", pid)
 	case <-ctx.Done():
 		pc.logger.Warnf("Context cancelled during force termination of PID %d", pid)
-		return NewCancelledError("termination cancelled", ctx.Err()).WithContext("pid", pid)
+		return errors.NewCancelledError("termination cancelled", ctx.Err()).WithContext("pid", pid)
 	}
 }

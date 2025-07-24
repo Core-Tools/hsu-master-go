@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/core-tools/hsu-master/pkg/errors"
 	"github.com/core-tools/hsu-master/pkg/logging"
 )
 
@@ -93,14 +94,14 @@ func (m *ProcessFileManager) WritePIDFile(workerID string, pid int) error {
 	// Validate directory exists and is writable
 	if err := m.ValidatePIDFileDirectory(pidFilePath); err != nil {
 		m.logger.Errorf("PID file directory validation failed, worker: %s, path: %s, error: %v", workerID, pidFilePath, err)
-		return NewIOError("PID file directory validation failed", err).WithContext("pid_file", pidFilePath)
+		return errors.NewIOError("PID file directory validation failed", err).WithContext("pid_file", pidFilePath)
 	}
 
 	// Write PID to file
 	pidContent := fmt.Sprintf("%d\n", pid)
 	if err := os.WriteFile(pidFilePath, []byte(pidContent), 0644); err != nil {
 		m.logger.Errorf("Failed to write PID file, worker: %s, pid: %d, path: %s, error: %v", workerID, pid, pidFilePath, err)
-		return NewIOError("failed to write PID file", err).WithContext("pid_file", pidFilePath).WithContext("pid", pid)
+		return errors.NewIOError("failed to write PID file", err).WithContext("pid_file", pidFilePath).WithContext("pid", pid)
 	}
 
 	m.logger.Infof("PID file written successfully, worker: %s, pid: %d, path: %s", workerID, pid, pidFilePath)
@@ -115,14 +116,14 @@ func (m *ProcessFileManager) WritePortFile(workerID string, port int) error {
 	// Validate directory exists and is writable
 	if err := m.ValidatePIDFileDirectory(portPath); err != nil {
 		m.logger.Errorf("Port file directory validation failed, worker: %s, path: %s, error: %v", workerID, portPath, err)
-		return NewIOError("port file directory validation failed", err).WithContext("port_file", portPath)
+		return errors.NewIOError("port file directory validation failed", err).WithContext("port_file", portPath)
 	}
 
 	// Write port to file
 	portContent := fmt.Sprintf("%d\n", port)
 	if err := os.WriteFile(portPath, []byte(portContent), 0644); err != nil {
 		m.logger.Errorf("Failed to write port file, worker: %s, port: %d, path: %s, error: %v", workerID, port, portPath, err)
-		return NewIOError("failed to write port file", err).WithContext("port_file", portPath).WithContext("port", port)
+		return errors.NewIOError("failed to write port file", err).WithContext("port_file", portPath).WithContext("port", port)
 	}
 
 	m.logger.Infof("Port file written successfully, worker: %s, port: %d, path: %s", workerID, port, portPath)
@@ -138,7 +139,7 @@ func (m *ProcessFileManager) ReadPortFile(workerID string) (int, error) {
 	content, err := os.ReadFile(portPath)
 	if err != nil {
 		m.logger.Warnf("Failed to read port file, worker: %s, path: %s, error: %v", workerID, portPath, err)
-		return 0, NewIOError("failed to read port file", err).WithContext("port_file", portPath)
+		return 0, errors.NewIOError("failed to read port file", err).WithContext("port_file", portPath)
 	}
 
 	// Parse port number
@@ -146,7 +147,7 @@ func (m *ProcessFileManager) ReadPortFile(workerID string) (int, error) {
 	port, err := strconv.Atoi(portStr)
 	if err != nil {
 		m.logger.Errorf("Invalid port content in port file, worker: %s, path: %s, content: %s, error: %v", workerID, portPath, portStr, err)
-		return 0, NewValidationError("invalid port in port file", err).WithContext("port_file", portPath).WithContext("content", portStr)
+		return 0, errors.NewValidationError("invalid port in port file", err).WithContext("port_file", portPath).WithContext("content", portStr)
 	}
 
 	m.logger.Debugf("Port file read successfully, worker: %s, port: %d, path: %s", workerID, port, portPath)
@@ -268,19 +269,19 @@ func (m *ProcessFileManager) ValidatePIDFileDirectory(pidFilePath string) error 
 		if os.IsNotExist(err) {
 			// Try to create the directory
 			if err := os.MkdirAll(dir, 0755); err != nil {
-				return NewIOError("failed to create PID file directory", err).WithContext("directory", dir)
+				return errors.NewIOError("failed to create PID file directory", err).WithContext("directory", dir)
 			}
 		} else {
-			return NewIOError("failed to access PID file directory", err).WithContext("directory", dir)
+			return errors.NewIOError("failed to access PID file directory", err).WithContext("directory", dir)
 		}
 	} else if !info.IsDir() {
-		return NewValidationError("PID file path is not a directory", nil).WithContext("path", dir)
+		return errors.NewValidationError("PID file path is not a directory", nil).WithContext("path", dir)
 	}
 
 	// Check if directory is writable
 	testFile := filepath.Join(dir, ".write_test")
 	if file, err := os.Create(testFile); err != nil {
-		return NewPermissionError("PID file directory is not writable", err).WithContext("directory", dir)
+		return errors.NewPermissionError("PID file directory is not writable", err).WithContext("directory", dir)
 	} else {
 		file.Close()
 		os.Remove(testFile)

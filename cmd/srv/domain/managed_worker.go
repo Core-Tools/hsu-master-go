@@ -6,7 +6,9 @@ import (
 	"os"
 	"time"
 
+	"github.com/core-tools/hsu-master/pkg/errors"
 	"github.com/core-tools/hsu-master/pkg/logging"
+	"github.com/core-tools/hsu-master/pkg/process"
 )
 
 type managedWorker struct {
@@ -60,6 +62,16 @@ func (w *managedWorker) ProcessControlOptions() ProcessControlOptions {
 }
 
 func (w *managedWorker) AttachCmd(ctx context.Context) (*os.Process, io.ReadCloser, *HealthCheckConfig, error) {
+	w.logger.Infof("Attaching to managed worker, id: %s", w.id)
+
+	healthCheck := w.healthCheckConfig
+
+	// Validate health check configuration
+	if err := ValidateHealthCheckConfig(healthCheck); err != nil {
+		w.logger.Errorf("Managed worker health check configuration validation failed, id: %s, error: %v", w.id, err)
+		return nil, nil, nil, errors.NewValidationError("invalid health check configuration", err).WithContext("id", w.id)
+	}
+
 	pidFile := w.pidManager.GeneratePIDFilePath(w.id)
 
 	discovery := DiscoveryConfig{
@@ -73,24 +85,43 @@ func (w *managedWorker) AttachCmd(ctx context.Context) (*os.Process, io.ReadClos
 		return nil, nil, nil, err
 	}
 
-	return process, stdout, &w.healthCheckConfig, nil
+	w.logger.Infof("Managed worker attached successfully, id: %s, PID: %d", w.id, process.Pid)
+
+	return process, stdout, &healthCheck, nil
 }
 
 func (w *managedWorker) ExecuteCmd(ctx context.Context) (*os.Process, io.ReadCloser, *HealthCheckConfig, error) {
-	// Validate context
-	if ctx == nil {
-		return nil, nil, nil, NewValidationError("context cannot be nil", nil)
-	}
-
 	w.logger.Infof("Executing managed worker command, id: %s", w.id)
 
 	execution := w.processControlConfig.Execution
+	healthCheck := w.healthCheckConfig
+
+	// Validate execution configuration
+	if err := ValidateExecutionConfig(execution); err != nil {
+		w.logger.Errorf("Managed worker execution configuration validation failed, id: %s, error: %v", w.id, err)
+		return nil, nil, nil, errors.NewValidationError("invalid execution configuration", err).WithContext("id", w.id)
+	}
+
+	// Validate health check configuration
+	if err := ValidateHealthCheckConfig(healthCheck); err != nil {
+		w.logger.Errorf("Managed worker health check configuration validation failed, id: %s, error: %v", w.id, err)
+		return nil, nil, nil, errors.NewValidationError("invalid health check configuration", err).WithContext("id", w.id)
+	}
 
 	// Create the standard execute command
-	stdCmd := NewStdExecuteCmd(execution, w.id, w.logger)
-	process, stdout, err := stdCmd(ctx)
+
+	processExecution := process.ExecutionConfig{
+		ExecutablePath:   execution.ExecutablePath,
+		Args:             execution.Args,
+		Environment:      execution.Environment,
+		WorkingDirectory: execution.WorkingDirectory,
+		WaitDelay:        execution.WaitDelay,
+	}
+
+	stdExecuteCmd := process.NewStdExecuteCmd(processExecution, w.id, w.logger)
+	process, stdout, err := stdExecuteCmd(ctx)
 	if err != nil {
-		return nil, nil, nil, NewProcessError("failed to execute managed worker command", err).WithContext("worker_id", w.id)
+		return nil, nil, nil, errors.NewProcessError("failed to execute managed worker command", err).WithContext("worker_id", w.id)
 	}
 
 	// Write PID file
@@ -102,10 +133,7 @@ func (w *managedWorker) ExecuteCmd(ctx context.Context) (*os.Process, io.ReadClo
 		w.logger.Infof("PID file written for worker %s: %s (PID: %d)", w.id, pidFile, process.Pid)
 	}
 
-	// Create health check configuration based on the unit's health check settings
-	healthCheckConfig := &w.healthCheckConfig
-
 	w.logger.Infof("Managed worker command executed successfully, id: %s, PID: %d", w.id, process.Pid)
 
-	return process, stdout, healthCheckConfig, nil
+	return process, stdout, &healthCheck, nil
 }

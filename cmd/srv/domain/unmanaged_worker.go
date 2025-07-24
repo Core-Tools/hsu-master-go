@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/core-tools/hsu-master/pkg/errors"
 	"github.com/core-tools/hsu-master/pkg/logging"
 )
 
@@ -55,11 +56,30 @@ func (w *unmanagedWorker) ProcessControlOptions() ProcessControlOptions {
 }
 
 func (w *unmanagedWorker) AttachCmd(ctx context.Context) (*os.Process, io.ReadCloser, *HealthCheckConfig, error) {
-	stdAttachCmd := NewStdAttachCmd(w.discoveryConfig, w.id, w.logger)
+	w.logger.Infof("Attaching to unmanaged worker, id: %s", w.id)
+
+	discovery := w.discoveryConfig
+	healthCheck := w.healthCheckConfig
+
+	// Validate discovery configuration
+	if err := ValidateDiscoveryConfig(discovery); err != nil {
+		w.logger.Errorf("Unmanaged worker discovery configuration validation failed, id: %s, error: %v", w.id, err)
+		return nil, nil, nil, errors.NewValidationError("invalid discovery configuration", err).WithContext("id", w.id)
+	}
+
+	// Validate health check configuration
+	if err := ValidateHealthCheckConfig(healthCheck); err != nil {
+		w.logger.Errorf("Unmanaged worker health check configuration validation failed, id: %s, error: %v", w.id, err)
+		return nil, nil, nil, errors.NewValidationError("invalid health check configuration", err).WithContext("id", w.id)
+	}
+
+	stdAttachCmd := NewStdAttachCmd(discovery, w.id, w.logger)
 	process, stdout, err := stdAttachCmd(ctx)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 
-	return process, stdout, &w.healthCheckConfig, nil
+	w.logger.Infof("Unmanaged worker attached successfully, id: %s, PID: %d", w.id, process.Pid)
+
+	return process, stdout, &healthCheck, nil
 }

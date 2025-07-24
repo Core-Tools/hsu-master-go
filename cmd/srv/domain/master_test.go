@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/core-tools/hsu-master/pkg/errors"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -131,7 +133,7 @@ func TestMaster_AddWorker(t *testing.T) {
 		err := master.AddWorker(nil)
 
 		assert.Error(t, err)
-		assert.True(t, IsValidationError(err))
+		assert.True(t, errors.IsValidationError(err))
 	})
 
 	t.Run("duplicate_worker", func(t *testing.T) {
@@ -144,7 +146,7 @@ func TestMaster_AddWorker(t *testing.T) {
 
 		assert.NoError(t, err1)
 		require.Error(t, err2)
-		assert.True(t, IsConflictError(err2), "Expected ConflictError but got: %v", err2)
+		assert.True(t, errors.IsConflictError(err2), "Expected ConflictError but got: %v", err2)
 		assert.Equal(t, 1, len(master.workers))
 
 		// Clean up mock expectations
@@ -161,7 +163,7 @@ func TestMaster_AddWorker(t *testing.T) {
 		err := master.AddWorker(worker)
 
 		assert.Error(t, err)
-		assert.True(t, IsValidationError(err))
+		assert.True(t, errors.IsValidationError(err))
 		worker.AssertExpectations(t)
 	})
 }
@@ -182,7 +184,7 @@ func TestMaster_RemoveWorker(t *testing.T) {
 		// Verify worker is removed
 		_, err = master.GetWorkerState("test-worker-1")
 		assert.Error(t, err)
-		assert.True(t, IsNotFoundError(err))
+		assert.True(t, errors.IsNotFoundError(err))
 	})
 
 	t.Run("invalid_worker_id", func(t *testing.T) {
@@ -190,7 +192,7 @@ func TestMaster_RemoveWorker(t *testing.T) {
 		err := master.RemoveWorker("")
 
 		assert.Error(t, err)
-		assert.True(t, IsValidationError(err))
+		assert.True(t, errors.IsValidationError(err))
 	})
 
 	t.Run("nonexistent_worker", func(t *testing.T) {
@@ -198,7 +200,7 @@ func TestMaster_RemoveWorker(t *testing.T) {
 		err := master.RemoveWorker("nonexistent-worker")
 
 		assert.Error(t, err)
-		assert.True(t, IsNotFoundError(err))
+		assert.True(t, errors.IsNotFoundError(err))
 	})
 
 	t.Run("cannot_remove_running_worker", func(t *testing.T) {
@@ -221,7 +223,7 @@ func TestMaster_RemoveWorker(t *testing.T) {
 		// Should not be able to remove running worker
 		err = master.RemoveWorker("running-worker")
 		assert.Error(t, err)
-		assert.True(t, IsValidationError(err))
+		assert.True(t, errors.IsValidationError(err))
 		assert.Contains(t, err.Error(), "cannot remove worker in state 'running'")
 		assert.Contains(t, err.Error(), "worker must be stopped before removal")
 
@@ -259,7 +261,7 @@ func TestMaster_RemoveWorker(t *testing.T) {
 		// Worker should be removed
 		_, err = master.GetWorkerState("stopped-worker")
 		assert.Error(t, err)
-		assert.True(t, IsNotFoundError(err))
+		assert.True(t, errors.IsNotFoundError(err))
 	})
 
 	t.Run("can_remove_failed_worker", func(t *testing.T) {
@@ -286,7 +288,7 @@ func TestMaster_RemoveWorker(t *testing.T) {
 		// Worker should be removed
 		_, err = master.GetWorkerState("failed-worker")
 		assert.Error(t, err)
-		assert.True(t, IsNotFoundError(err))
+		assert.True(t, errors.IsNotFoundError(err))
 	})
 }
 
@@ -320,7 +322,7 @@ func TestMaster_StartWorker(t *testing.T) {
 		err := master.StartWorker(nil, "test-worker-1")
 
 		assert.Error(t, err)
-		assert.True(t, IsValidationError(err))
+		assert.True(t, errors.IsValidationError(err))
 	})
 
 	t.Run("invalid_worker_id", func(t *testing.T) {
@@ -329,7 +331,7 @@ func TestMaster_StartWorker(t *testing.T) {
 		err := master.StartWorker(ctx, "")
 
 		assert.Error(t, err)
-		assert.True(t, IsValidationError(err))
+		assert.True(t, errors.IsValidationError(err))
 	})
 
 	t.Run("nonexistent_worker", func(t *testing.T) {
@@ -338,7 +340,7 @@ func TestMaster_StartWorker(t *testing.T) {
 		err := master.StartWorker(ctx, "nonexistent-worker")
 
 		assert.Error(t, err)
-		assert.True(t, IsNotFoundError(err))
+		assert.True(t, errors.IsNotFoundError(err))
 	})
 }
 
@@ -348,7 +350,7 @@ func TestMaster_StopWorker(t *testing.T) {
 		err := master.StopWorker(nil, "test-worker-1")
 
 		assert.Error(t, err)
-		assert.True(t, IsValidationError(err))
+		assert.True(t, errors.IsValidationError(err))
 	})
 
 	t.Run("invalid_worker_id", func(t *testing.T) {
@@ -357,7 +359,7 @@ func TestMaster_StopWorker(t *testing.T) {
 		err := master.StopWorker(ctx, "")
 
 		assert.Error(t, err)
-		assert.True(t, IsValidationError(err))
+		assert.True(t, errors.IsValidationError(err))
 	})
 
 	t.Run("nonexistent_worker", func(t *testing.T) {
@@ -366,7 +368,7 @@ func TestMaster_StopWorker(t *testing.T) {
 		err := master.StopWorker(ctx, "nonexistent-worker")
 
 		assert.Error(t, err)
-		assert.True(t, IsNotFoundError(err))
+		assert.True(t, errors.IsNotFoundError(err))
 	})
 }
 
@@ -417,7 +419,7 @@ func TestMaster_ContextCancellation(t *testing.T) {
 	assert.Error(t, err)
 	// The actual error depends on whether the worker exists or not
 	// If worker doesn't exist, we get NotFoundError before checking context
-	assert.True(t, IsNotFoundError(err) || IsCancelledError(err))
+	assert.True(t, errors.IsNotFoundError(err) || errors.IsCancelledError(err))
 }
 
 func TestMaster_ContextTimeout(t *testing.T) {
@@ -434,5 +436,5 @@ func TestMaster_ContextTimeout(t *testing.T) {
 	err := master.StartWorker(ctx, "test-worker")
 	assert.Error(t, err)
 	// The actual error depends on whether the worker exists or not
-	assert.True(t, IsNotFoundError(err) || IsCancelledError(err))
+	assert.True(t, errors.IsNotFoundError(err) || errors.IsCancelledError(err))
 }

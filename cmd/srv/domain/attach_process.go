@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/core-tools/hsu-master/pkg/errors"
 	"github.com/core-tools/hsu-master/pkg/logging"
 )
 
@@ -18,13 +19,7 @@ func NewStdAttachCmd(config DiscoveryConfig, id string, logger logging.Logger) S
 	return func(ctx context.Context) (*os.Process, io.ReadCloser, error) {
 		// Validate context
 		if ctx == nil {
-			return nil, nil, NewValidationError("context cannot be nil", nil).WithContext("id", id)
-		}
-
-		// Validate discovery configuration
-		if err := ValidateDiscoveryConfig(config); err != nil {
-			logger.Errorf("Discovery configuration validation failed, id: %s, error: %v", id, err)
-			return nil, nil, NewValidationError("invalid discovery configuration", err).WithContext("id", id)
+			return nil, nil, errors.NewValidationError("context cannot be nil", nil).WithContext("id", id)
 		}
 
 		logger.Infof("Attaching to process, id: %s, discovery config: %+v", id, config)
@@ -49,12 +44,12 @@ func NewStdAttachCmd(config DiscoveryConfig, id string, logger logging.Logger) S
 			process, err = openProcessByServiceName(config.ServiceName)
 		default:
 			logger.Errorf("Unsupported discovery method, id: %s, method: %s", id, config.Method)
-			return nil, nil, NewValidationError("unsupported discovery method: "+string(config.Method), nil).WithContext("id", id)
+			return nil, nil, errors.NewValidationError("unsupported discovery method: "+string(config.Method), nil).WithContext("id", id)
 		}
 
 		if err != nil {
 			logger.Errorf("Failed to discover process, id: %s, method: %s, error: %v", id, config.Method, err)
-			return nil, nil, NewDiscoveryError("failed to discover process", err).WithContext("discovery_method", string(config.Method)).WithContext("id", id)
+			return nil, nil, errors.NewDiscoveryError("failed to discover process", err).WithContext("discovery_method", string(config.Method)).WithContext("id", id)
 		}
 
 		logger.Infof("Successfully attached to process, id: %s, PID: %d, discovery: %s", id, process.Pid, config.Method)
@@ -73,29 +68,29 @@ func openProcessByPIDFile(pidFile string) (*os.Process, error) {
 	// Read PID from file
 	pidBytes, err := os.ReadFile(pidFile)
 	if err != nil {
-		return nil, NewIOError("failed to read PID file", err).WithContext("pid_file", pidFile)
+		return nil, errors.NewIOError("failed to read PID file", err).WithContext("pid_file", pidFile)
 	}
 
 	// Parse PID (trim whitespace/newlines)
 	pidStr := strings.TrimSpace(string(pidBytes))
 	if pidStr == "" {
-		return nil, NewValidationError("PID file is empty", nil).WithContext("pid_file", pidFile)
+		return nil, errors.NewValidationError("PID file is empty", nil).WithContext("pid_file", pidFile)
 	}
 
 	pid, err := ValidatePID(pidStr)
 	if err != nil {
-		return nil, NewValidationError("invalid PID in file", err).WithContext("pid_file", pidFile).WithContext("pid_content", pidStr)
+		return nil, errors.NewValidationError("invalid PID in file", err).WithContext("pid_file", pidFile).WithContext("pid_content", pidStr)
 	}
 
 	// Find the process
 	process, err := os.FindProcess(pid)
 	if err != nil {
-		return nil, NewProcessError("failed to find process", err).WithContext("pid", pid).WithContext("pid_file", pidFile)
+		return nil, errors.NewProcessError("failed to find process", err).WithContext("pid", pid).WithContext("pid_file", pidFile)
 	}
 
 	// Verify the process is actually running
 	if !isProcessRunning(process.Pid) {
-		return nil, NewProcessError("process is not running", err).WithContext("pid", pid).WithContext("pid_file", pidFile)
+		return nil, errors.NewProcessError("process is not running", err).WithContext("pid", pid).WithContext("pid_file", pidFile)
 	}
 
 	return process, nil
