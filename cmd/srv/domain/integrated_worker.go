@@ -6,7 +6,6 @@ import (
 	"io"
 	"net"
 	"os"
-	"os/exec"
 	"time"
 
 	"github.com/core-tools/hsu-master/pkg/logging"
@@ -23,7 +22,7 @@ type integratedWorker struct {
 
 func NewIntegratedWorker(id string, unit *IntegratedUnit, logger logging.Logger) Worker {
 	// Get PID file configuration from unit or use default
-	pidConfig := unit.Control.Execution.ProcessFileConfig
+	pidConfig := unit.Control.ProcessFile
 	if pidConfig == nil {
 		// Use default system service configuration
 		defaultConfig := GetRecommendedProcessFileConfig("system", DefaultAppName)
@@ -49,17 +48,10 @@ func (w *integratedWorker) Metadata() UnitMetadata {
 }
 
 func (w *integratedWorker) ProcessControlOptions() ProcessControlOptions {
-	pidFile := w.pidManager.GeneratePIDFilePath(w.id)
-
 	return ProcessControlOptions{
-		CanAttach:    true,
-		CanTerminate: true,
-		CanRestart:   true,
-		Discovery: DiscoveryConfig{
-			Method:        DiscoveryMethodPIDFile,
-			PIDFile:       pidFile,
-			CheckInterval: 30 * time.Second,
-		},
+		CanAttach:       true,
+		CanTerminate:    true,
+		CanRestart:      true,
 		ExecuteCmd:      w.ExecuteCmd,
 		AttachCmd:       w.AttachCmd, // Use custom AttachCmd that creates dynamic gRPC health check
 		Restart:         &w.processControlConfig.Restart,
@@ -70,12 +62,18 @@ func (w *integratedWorker) ProcessControlOptions() ProcessControlOptions {
 }
 
 // AttachCmd creates a dynamic gRPC health check configuration by reading the port file
-func (w *integratedWorker) AttachCmd(config DiscoveryConfig) (*os.Process, io.ReadCloser, *HealthCheckConfig, error) {
-	w.logger.Infof("Executing integrated worker attach command, id: %s, config: %+v", w.id, config)
+func (w *integratedWorker) AttachCmd(ctx context.Context) (*os.Process, io.ReadCloser, *HealthCheckConfig, error) {
+	w.logger.Infof("Executing integrated worker attach command, id: %s", w.id)
 
 	// Use standard attachment to discover the process
-	stdAttachCmd := NewStdAttachCmd(nil, w.logger, w.id) // No health check config yet, but include logging
-	process, stdout, _, err := stdAttachCmd(config)      // Updated to match new signature
+	pidFile := w.pidManager.GeneratePIDFilePath(w.id)
+	discovery := DiscoveryConfig{
+		Method:        DiscoveryMethodPIDFile,
+		PIDFile:       pidFile,
+		CheckInterval: 30 * time.Second,
+	}
+	stdAttachCmd := NewStdAttachCmd(discovery, w.id, w.logger)
+	process, stdout, err := stdAttachCmd(ctx)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -105,7 +103,7 @@ func (w *integratedWorker) AttachCmd(config DiscoveryConfig) (*os.Process, io.Re
 	return process, stdout, healthCheckConfig, nil
 }
 
-func (w *integratedWorker) ExecuteCmd(ctx context.Context) (*exec.Cmd, io.ReadCloser, *HealthCheckConfig, error) {
+func (w *integratedWorker) ExecuteCmd(ctx context.Context) (*os.Process, io.ReadCloser, *HealthCheckConfig, error) {
 	// Validate context
 	if ctx == nil {
 		return nil, nil, nil, NewValidationError("context cannot be nil", nil)
@@ -126,19 +124,19 @@ func (w *integratedWorker) ExecuteCmd(ctx context.Context) (*exec.Cmd, io.ReadCl
 
 	execution.Args = append(execution.Args, "--port", portStr)
 
-	stdCmd := NewStdExecuteCmd(execution, w.logger)
-	cmd, stdout, err := stdCmd(ctx)
+	stdCmd := NewStdExecuteCmd(execution, w.id, w.logger)
+	process, stdout, err := stdCmd(ctx)
 	if err != nil {
 		return nil, nil, nil, NewProcessError("failed to execute command", err).WithContext("port", port)
 	}
 
 	// Write PID file
-	if err := w.pidManager.WritePIDFile(w.id, cmd.Process.Pid); err != nil {
+	if err := w.pidManager.WritePIDFile(w.id, process.Pid); err != nil {
 		// Log error but don't fail - the process is already running
 		w.logger.Errorf("Failed to write PID file for worker %s: %v", w.id, err)
 	} else {
 		pidFile := w.pidManager.GeneratePIDFilePath(w.id)
-		w.logger.Infof("PID file written for worker %s: %s (PID: %d)", w.id, pidFile, cmd.Process.Pid)
+		w.logger.Infof("PID file written for worker %s: %s (PID: %d)", w.id, pidFile, process.Pid)
 	}
 
 	// Write port file
@@ -160,7 +158,7 @@ func (w *integratedWorker) ExecuteCmd(ctx context.Context) (*exec.Cmd, io.ReadCl
 		RunOptions: w.healthCheckRunOptions,
 	}
 
-	return cmd, stdout, healthCheckConfig, nil
+	return process, stdout, healthCheckConfig, nil
 }
 
 func getFreePort() (int, error) {

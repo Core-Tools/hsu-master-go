@@ -76,43 +76,40 @@ type ExecutionConfig struct {
 	Environment      []string      `yaml:"environment,omitempty"`
 	WorkingDirectory string        `yaml:"working_directory,omitempty"`
 	WaitDelay        time.Duration `yaml:"wait_delay,omitempty"`
-
-	// PID file configuration (optional)
-	ProcessFileConfig *ProcessFileConfig `yaml:"process_file,omitempty"`
 }
 
-type StdExecuteCmd func(ctx context.Context) (*exec.Cmd, io.ReadCloser, error)
+type StdExecuteCmd func(ctx context.Context) (*os.Process, io.ReadCloser, error)
 
-func NewStdExecuteCmd(execution ExecutionConfig, logger logging.Logger) StdExecuteCmd {
-	return func(ctx context.Context) (*exec.Cmd, io.ReadCloser, error) {
+func NewStdExecuteCmd(execution ExecutionConfig, id string, logger logging.Logger) StdExecuteCmd {
+	return func(ctx context.Context) (*os.Process, io.ReadCloser, error) {
 		// Validate context
 		if ctx == nil {
-			return nil, nil, NewValidationError("context cannot be nil", nil)
+			return nil, nil, NewValidationError("context cannot be nil", nil).WithContext("id", id)
 		}
 
 		// Validate execution config
 		if err := ValidateExecutionConfig(execution); err != nil {
-			return nil, nil, NewValidationError("invalid execution configuration", err)
+			return nil, nil, NewValidationError("invalid execution configuration", err).WithContext("id", id)
 		}
 
-		logger.Infof("Executing process, execution config: %+v", execution)
+		logger.Infof("Executing process, id: %s, execution config: %+v", id, execution)
 
 		// Check if the process is executable, and make it executable if it's not
 		if err := ensureExecutable(execution.ExecutablePath); err != nil {
-			return nil, nil, NewPermissionError("failed to ensure process is executable", err).WithContext("executable_path", execution.ExecutablePath)
+			return nil, nil, NewPermissionError("failed to ensure process is executable", err).WithContext("id", id).WithContext("executable_path", execution.ExecutablePath)
 		}
 
 		workDir := execution.WorkingDirectory
 		if workDir == "" {
 			absPath, err := filepath.Abs(execution.ExecutablePath)
 			if err != nil {
-				return nil, nil, NewIOError("failed to get absolute path", err).WithContext("executable_path", execution.ExecutablePath)
+				return nil, nil, NewIOError("failed to get absolute path", err).WithContext("id", id).WithContext("executable_path", execution.ExecutablePath)
 			}
 			workDir = filepath.Dir(absPath)
 		}
 
-		logger.Debugf("Executing process: '%s', args: %v, working directory: '%s'",
-			execution.ExecutablePath, execution.Args, workDir)
+		logger.Debugf("Executing process: id: %s, executable path: '%s', args: %v, working directory: '%s'",
+			id, execution.ExecutablePath, execution.Args, workDir)
 
 		env := os.Environ()
 		for _, e := range execution.Environment {
@@ -131,17 +128,19 @@ func NewStdExecuteCmd(execution ExecutionConfig, logger logging.Logger) StdExecu
 
 		stdout, err := cmd.StdoutPipe()
 		if err != nil {
-			return nil, nil, NewProcessError("failed to create stdout pipe", err).WithContext("executable_path", execution.ExecutablePath)
+			return nil, nil, NewProcessError("failed to create stdout pipe", err).WithContext("id", id).WithContext("executable_path", execution.ExecutablePath)
 		}
 		cmd.Stderr = cmd.Stdout
 
-		logger.Infof("Starting process, cmd: %+v", cmd)
+		logger.Infof("Executing process, id: %s, cmd: %+v", id, cmd)
 
 		err = cmd.Start()
 		if err != nil {
-			return nil, nil, NewProcessError("failed to start the process", err).WithContext("executable_path", execution.ExecutablePath)
+			return nil, nil, NewProcessError("failed to start the process", err).WithContext("id", id).WithContext("executable_path", execution.ExecutablePath)
 		}
 
-		return cmd, stdout, nil
+		logger.Infof("Successfully executed process, id: %s, PID: %d", id, cmd.Process.Pid)
+
+		return cmd.Process, stdout, nil
 	}
 }

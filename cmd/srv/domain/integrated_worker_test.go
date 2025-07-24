@@ -134,10 +134,6 @@ func TestIntegratedWorker_ProcessControlOptions(t *testing.T) {
 	assert.True(t, options.CanTerminate, "IntegratedWorker should support termination")
 	assert.True(t, options.CanRestart, "IntegratedWorker should support restart")
 
-	// Test discovery configuration (always PID file for integrated)
-	assert.Equal(t, DiscoveryMethodPIDFile, options.Discovery.Method)
-	assert.NotEmpty(t, options.Discovery.PIDFile) // Should have a generated PID file path
-
 	// Test ExecuteCmd is present
 	assert.NotNil(t, options.ExecuteCmd, "IntegratedWorker should provide ExecuteCmd")
 
@@ -192,11 +188,11 @@ func TestIntegratedWorker_ExecuteCmd_ValidContext(t *testing.T) {
 	worker := NewIntegratedWorker("test-integrated-6", unit, logger).(*integratedWorker)
 
 	ctx := context.Background()
-	cmd, stdout, healthCheck, err := worker.ExecuteCmd(ctx)
+	process, stdout, healthCheck, err := worker.ExecuteCmd(ctx)
 
-	if cmd != nil {
+	if process != nil {
 		// Clean up the process if it was created
-		cmd.Process.Kill()
+		process.Kill()
 	}
 	if stdout != nil {
 		stdout.Close()
@@ -205,27 +201,20 @@ func TestIntegratedWorker_ExecuteCmd_ValidContext(t *testing.T) {
 	// Note: This test might fail if the executable doesn't exist or isn't executable
 	// But the structure should be correct
 	if err == nil {
-		assert.NotNil(t, cmd)
+		assert.NotNil(t, process)
 		assert.NotNil(t, stdout)
 		assert.NotNil(t, healthCheck)
 
 		// Test health check configuration
 		assert.Equal(t, HealthCheckTypeGRPC, healthCheck.Type)
 		assert.NotEmpty(t, healthCheck.GRPC.Address)
-		assert.Contains(t, healthCheck.GRPC.Address, "localhost:")
+		addressAndPort := strings.Split(healthCheck.GRPC.Address, ":")
+		require.Len(t, addressAndPort, 2)
+		assert.Equal(t, addressAndPort[0], "localhost")
+		assert.NotEmpty(t, addressAndPort[1])
 		assert.Equal(t, "CoreService", healthCheck.GRPC.Service)
 		assert.Equal(t, "Ping", healthCheck.GRPC.Method)
 		assert.Equal(t, unit.HealthCheckRunOptions, healthCheck.RunOptions)
-
-		// Test that port was added to args
-		found := false
-		for i, arg := range cmd.Args {
-			if arg == "--port" && i+1 < len(cmd.Args) {
-				found = true
-				break
-			}
-		}
-		assert.True(t, found, "Port argument should be added to command args")
 	} else {
 		// If execution fails, error should be properly formatted
 		assert.True(t, IsProcessError(err) || IsValidationError(err) || IsPermissionError(err) || IsIOError(err) || IsNetworkError(err))
@@ -249,10 +238,10 @@ func TestIntegratedWorker_ExecuteCmd_PortAllocation(t *testing.T) {
 	ports := make(map[string]bool)
 	successCount := 0
 	for i := 0; i < 3; i++ {
-		cmd, stdout, healthCheck, err := worker.ExecuteCmd(ctx)
+		process, stdout, healthCheck, err := worker.ExecuteCmd(ctx)
 
-		if cmd != nil {
-			cmd.Process.Kill()
+		if process != nil {
+			process.Kill()
 		}
 		if stdout != nil {
 			stdout.Close()
@@ -310,7 +299,6 @@ func TestIntegratedWorker_MultipleInstances(t *testing.T) {
 	assert.Equal(t, options1.CanAttach, options2.CanAttach)
 	assert.Equal(t, options1.CanTerminate, options2.CanTerminate)
 	assert.Equal(t, options1.CanRestart, options2.CanRestart)
-	assert.Equal(t, options1.Discovery.Method, options2.Discovery.Method)
 	assert.Equal(t, options1.GracefulTimeout, options2.GracefulTimeout)
 
 	// Both should have ExecuteCmd
@@ -332,7 +320,6 @@ func TestIntegratedWorker_ConfigurationVariations(t *testing.T) {
 	options := worker.ProcessControlOptions()
 
 	assert.Equal(t, 60*time.Second, options.GracefulTimeout)
-	assert.Equal(t, DiscoveryMethodPIDFile, options.Discovery.Method)
 
 	// Test that ExecuteCmd uses the new configuration
 	assert.NotNil(t, options.ExecuteCmd)
@@ -351,10 +338,10 @@ func TestIntegratedWorker_GetFreePort(t *testing.T) {
 	worker := NewIntegratedWorker("test-integrated-10", unit, logger).(*integratedWorker)
 
 	ctx := context.Background()
-	cmd, stdout, healthCheck, err := worker.ExecuteCmd(ctx)
+	process, stdout, healthCheck, err := worker.ExecuteCmd(ctx)
 
-	if cmd != nil {
-		cmd.Process.Kill()
+	if process != nil {
+		process.Kill()
 	}
 	if stdout != nil {
 		stdout.Close()

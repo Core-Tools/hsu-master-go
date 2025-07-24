@@ -31,11 +31,6 @@ func ValidateWorkerID(id string) error {
 
 // ValidateProcessControlOptions validates process control options
 func ValidateProcessControlOptions(options ProcessControlOptions) error {
-	// Validate discovery config
-	if err := ValidateDiscoveryConfig(options.Discovery); err != nil {
-		return NewValidationError("invalid discovery configuration", err)
-	}
-
 	// Validate graceful timeout
 	if options.GracefulTimeout < 0 {
 		return NewValidationError("graceful timeout cannot be negative", nil)

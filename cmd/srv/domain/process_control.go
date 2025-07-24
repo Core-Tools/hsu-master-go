@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"sync"
 	"time"
 
@@ -70,6 +69,9 @@ type ManagedProcessControlConfig struct {
 	// Process execution
 	Execution ExecutionConfig `yaml:"execution"`
 
+	// PID file configuration (optional)
+	ProcessFile *ProcessFileConfig `yaml:"process_file,omitempty"`
+
 	// Process restart
 	Restart RestartConfig `yaml:"restart"`
 
@@ -129,7 +131,11 @@ type ProcessControl interface {
 	Restart(ctx context.Context) error
 }
 
-type ExecuteCmd func(ctx context.Context) (*exec.Cmd, io.ReadCloser, *HealthCheckConfig, error)
+// AttachCmd represents a command that attaches to an existing process
+type AttachCmd func(ctx context.Context) (*os.Process, io.ReadCloser, *HealthCheckConfig, error)
+
+// ExecuteCmd represents a command that executes a new process
+type ExecuteCmd func(ctx context.Context) (*os.Process, io.ReadCloser, *HealthCheckConfig, error)
 
 type ProcessControlOptions struct {
 	// Basic control
@@ -144,9 +150,8 @@ type ProcessControlOptions struct {
 	GracefulTimeout time.Duration // Time to wait for graceful shutdown
 
 	// Process start
-	Discovery  DiscoveryConfig // Discovery config, must be always present
-	ExecuteCmd ExecuteCmd      // Execute command, nil if not executable
-	AttachCmd  AttachCmd       // Attach command, nil if not attachable
+	ExecuteCmd ExecuteCmd // Execute command, nil if not executable
+	AttachCmd  AttachCmd  // Attach command, nil if not attachable
 
 	// Process restart
 	Restart *RestartConfig // nil if not restartable
@@ -242,9 +247,9 @@ func (pc *processControl) startInternal(ctx context.Context) error {
 	attachCmd := pc.config.AttachCmd
 
 	if pc.config.CanAttach && attachCmd != nil {
-		pc.logger.Infof("Attempting to attach to existing process, worker: %s, discovery: %s", pc.workerID, pc.config.Discovery.Method)
+		pc.logger.Infof("Attempting to attach to existing process, worker: %s", pc.workerID)
 
-		process, stdout, healthCheckConfig, err = attachCmd(pc.config.Discovery) // Updated signature
+		process, stdout, healthCheckConfig, err = attachCmd(ctx) // Updated signature
 		if err == nil {
 			pc.logger.Infof("Successfully attached to existing process, worker: %s, PID: %d", pc.workerID, process.Pid)
 			executeCmd = nil // attached successfully, no need to execute cmd
@@ -256,13 +261,11 @@ func (pc *processControl) startInternal(ctx context.Context) error {
 	if executeCmd != nil { // can't attach or not attached
 		pc.logger.Infof("Executing new process, worker: %s", pc.workerID)
 
-		var cmd *exec.Cmd
-		cmd, stdout, healthCheckConfig, err = executeCmd(ctx)
+		process, stdout, healthCheckConfig, err = executeCmd(ctx)
 		if err != nil {
 			return NewProcessError("failed to start process", err)
 		}
 
-		process = cmd.Process // Simplified assignment
 		pc.logger.Infof("New process started successfully, worker: %s, PID: %d", pc.workerID, process.Pid)
 	}
 

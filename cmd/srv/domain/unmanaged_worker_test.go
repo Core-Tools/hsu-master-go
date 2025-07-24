@@ -158,11 +158,6 @@ func TestUnmanagedWorker_ProcessControlOptions_PIDFile(t *testing.T) {
 	assert.True(t, options.CanTerminate, "UnmanagedWorker should support termination based on config")
 	assert.False(t, options.CanRestart, "UnmanagedWorker should not support restart based on config")
 
-	// Test discovery configuration matches unit
-	assert.Equal(t, DiscoveryMethodPIDFile, options.Discovery.Method)
-	assert.Equal(t, unit.Discovery.PIDFile, options.Discovery.PIDFile)
-	assert.Equal(t, 15*time.Second, options.Discovery.CheckInterval)
-
 	// Test ExecuteCmd is not present
 	assert.Nil(t, options.ExecuteCmd, "UnmanagedWorker should not provide ExecuteCmd")
 
@@ -203,12 +198,6 @@ func TestUnmanagedWorker_ProcessControlOptions_Port(t *testing.T) {
 	assert.True(t, options.CanAttach, "UnmanagedWorker must support attachment")
 	assert.False(t, options.CanTerminate, "UnmanagedWorker should not support termination based on config")
 	assert.False(t, options.CanRestart, "UnmanagedWorker should not support restart based on config")
-
-	// Test discovery configuration matches unit
-	assert.Equal(t, DiscoveryMethodPort, options.Discovery.Method)
-	assert.Equal(t, 8080, options.Discovery.Port)
-	assert.Equal(t, "tcp", options.Discovery.Protocol)
-	assert.Equal(t, 20*time.Second, options.Discovery.CheckInterval)
 
 	// Test ExecuteCmd is not present
 	assert.Nil(t, options.ExecuteCmd, "UnmanagedWorker should not provide ExecuteCmd")
@@ -271,14 +260,6 @@ func TestUnmanagedWorker_MultipleInstances(t *testing.T) {
 	// Test independence
 	assert.NotEqual(t, worker1.ID(), worker2.ID())
 	assert.NotEqual(t, worker1.Metadata(), worker2.Metadata()) // Different units, different metadata
-
-	// Test different discovery configurations (since they use different units)
-	options1 := worker1.ProcessControlOptions()
-	options2 := worker2.ProcessControlOptions()
-
-	assert.NotEqual(t, options1.Discovery, options2.Discovery)       // Different discovery methods
-	assert.NotEqual(t, options1.CanTerminate, options2.CanTerminate) // Different capabilities too
-	assert.Equal(t, options1.CanRestart, options2.CanRestart)        // Both false for CanRestart
 }
 
 func TestUnmanagedWorker_DifferentCapabilities(t *testing.T) {

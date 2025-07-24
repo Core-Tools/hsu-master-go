@@ -1,6 +1,10 @@
 package domain
 
 import (
+	"context"
+	"io"
+	"os"
+
 	"github.com/core-tools/hsu-master/pkg/logging"
 )
 
@@ -37,16 +41,25 @@ func (w *unmanagedWorker) ProcessControlOptions() ProcessControlOptions {
 		w.id, w.discoveryConfig.Method, w.processControlConfig.CanTerminate, w.processControlConfig.CanRestart)
 
 	return ProcessControlOptions{
-		CanAttach:       true,                                                  // Must attach to existing processes
-		CanTerminate:    w.processControlConfig.CanTerminate,                   // Based on system control config
-		CanRestart:      w.processControlConfig.CanRestart,                     // Based on system control config
-		Discovery:       w.discoveryConfig,                                     // Use configured discovery method
-		ExecuteCmd:      nil,                                                   // Cannot execute new processes
-		AttachCmd:       NewStdAttachCmd(&w.healthCheckConfig, w.logger, w.id), // Use unit's health check config with logging
-		Restart:         nil,                                                   // No restart configuration for unmanaged
-		Limits:          nil,                                                   // No resource limits for unmanaged
-		GracefulTimeout: w.processControlConfig.GracefulTimeout,                // Use configured graceful timeout
-		HealthCheck:     nil,                                                   // Provided by AttachCmd
-		AllowedSignals:  w.processControlConfig.AllowedSignals,                 // Use configured signal permissions
+		CanAttach:       true,                                   // Must attach to existing processes
+		CanTerminate:    w.processControlConfig.CanTerminate,    // Based on system control config
+		CanRestart:      w.processControlConfig.CanRestart,      // Based on system control config
+		ExecuteCmd:      nil,                                    // Cannot execute new processes
+		AttachCmd:       w.AttachCmd,                            // Use unit's health check config with logging
+		Restart:         nil,                                    // No restart configuration for unmanaged
+		Limits:          nil,                                    // No resource limits for unmanaged
+		GracefulTimeout: w.processControlConfig.GracefulTimeout, // Use configured graceful timeout
+		HealthCheck:     nil,                                    // Provided by AttachCmd
+		AllowedSignals:  w.processControlConfig.AllowedSignals,  // Use configured signal permissions
 	}
+}
+
+func (w *unmanagedWorker) AttachCmd(ctx context.Context) (*os.Process, io.ReadCloser, *HealthCheckConfig, error) {
+	stdAttachCmd := NewStdAttachCmd(w.discoveryConfig, w.id, w.logger)
+	process, stdout, err := stdAttachCmd(ctx)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	return process, stdout, &w.healthCheckConfig, nil
 }

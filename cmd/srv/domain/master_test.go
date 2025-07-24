@@ -3,6 +3,8 @@ package domain
 import (
 	"context"
 	"fmt"
+	"io"
+	"os"
 	"runtime"
 	"testing"
 	"time"
@@ -93,15 +95,21 @@ func createTestWorker(id string) *MockWorker {
 	mockLogger.On("Warnf", mock.Anything, mock.Anything).Maybe()
 	mockLogger.On("Errorf", mock.Anything, mock.Anything).Maybe()
 
+	discovery := DiscoveryConfig{
+		Method:  DiscoveryMethodPIDFile,
+		PIDFile: pidFile,
+	}
+	attachCmd := func(ctx context.Context) (*os.Process, io.ReadCloser, *HealthCheckConfig, error) {
+		stdCmd := NewStdAttachCmd(discovery, id, mockLogger)
+		process, stdout, err := stdCmd(ctx)
+		return process, stdout, nil, err
+	}
+
 	worker.On("ProcessControlOptions").Return(ProcessControlOptions{
 		CanAttach:    true,
 		CanTerminate: true,
 		CanRestart:   true,
-		Discovery: DiscoveryConfig{
-			Method:  DiscoveryMethodPIDFile,
-			PIDFile: pidFile,
-		},
-		AttachCmd: NewStdAttachCmd(nil, mockLogger, id), // Add AttachCmd with logger and worker ID
+		AttachCmd:    attachCmd,
 	})
 	return worker
 }

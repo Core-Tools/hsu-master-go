@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"runtime"
 	"testing"
 	"time"
@@ -137,11 +136,6 @@ func TestManagedWorker_ProcessControlOptions(t *testing.T) {
 	assert.True(t, options.CanTerminate, "ManagedWorker should support termination")
 	assert.True(t, options.CanRestart, "ManagedWorker should support restart")
 
-	// Test discovery configuration
-	assert.Equal(t, DiscoveryMethodPIDFile, options.Discovery.Method)
-	assert.NotEmpty(t, options.Discovery.PIDFile)
-	assert.Equal(t, 30*time.Second, options.Discovery.CheckInterval)
-
 	// Test ExecuteCmd is present
 	assert.NotNil(t, options.ExecuteCmd, "ManagedWorker should provide ExecuteCmd")
 
@@ -167,28 +161,6 @@ func TestManagedWorker_ProcessControlOptions(t *testing.T) {
 
 	// Test health check is provided by ExecuteCmd or AttachCmd
 	assert.Nil(t, options.HealthCheck, "ManagedWorker should provide health check via ExecuteCmd or AttachCmd")
-}
-
-func TestManagedWorker_PIDFileGeneration(t *testing.T) {
-	logger := &MockManagedLogger{}
-	unit := createTestManagedUnit()
-
-	worker := NewManagedWorker("test-managed-5", unit, logger)
-
-	options := worker.ProcessControlOptions()
-	pidFile := options.Discovery.PIDFile
-
-	// Test that PID file path is generated
-	assert.NotEmpty(t, pidFile)
-
-	// Test worker ID is included
-	assert.Contains(t, pidFile, "test-managed-5")
-
-	// Test .pid extension
-	assert.Equal(t, ".pid", filepath.Ext(pidFile))
-
-	// Test that path is absolute
-	assert.True(t, filepath.IsAbs(pidFile))
 }
 
 func TestManagedWorker_ExecuteCmd_NilContext(t *testing.T) {
@@ -218,11 +190,11 @@ func TestManagedWorker_ExecuteCmd_ValidContext(t *testing.T) {
 	worker := NewManagedWorker("test-managed-7", unit, logger).(*managedWorker)
 
 	ctx := context.Background()
-	cmd, stdout, healthCheck, err := worker.ExecuteCmd(ctx)
+	process, stdout, healthCheck, err := worker.ExecuteCmd(ctx)
 
-	if cmd != nil {
+	if process != nil {
 		// Clean up the process if it was created
-		cmd.Process.Kill()
+		process.Kill()
 	}
 	if stdout != nil {
 		stdout.Close()
@@ -231,7 +203,7 @@ func TestManagedWorker_ExecuteCmd_ValidContext(t *testing.T) {
 	// Note: This test might fail if the executable doesn't exist or isn't executable
 	// But the structure should be correct
 	if err == nil {
-		assert.NotNil(t, cmd)
+		assert.NotNil(t, process)
 		assert.NotNil(t, stdout)
 		assert.NotNil(t, healthCheck)
 		assert.Equal(t, HealthCheckTypeProcess, healthCheck.Type)
@@ -277,13 +249,13 @@ func TestManagedWorker_ExecuteCmd_PIDFileWriting(t *testing.T) {
 		},
 		Control: ManagedProcessControlConfig{
 			Execution: ExecutionConfig{
-				ExecutablePath:    executablePath,
-				Args:              args,
-				WorkingDirectory:  workingDirectory,
-				Environment:       []string{},
-				ProcessFileConfig: &pidConfig,
-				WaitDelay:         5 * time.Second,
+				ExecutablePath:   executablePath,
+				Args:             args,
+				WorkingDirectory: workingDirectory,
+				Environment:      []string{},
+				WaitDelay:        5 * time.Second,
 			},
+			ProcessFile:     &pidConfig,
 			GracefulTimeout: 30 * time.Second,
 			Restart: RestartConfig{
 				Policy:      RestartOnFailure,
@@ -320,14 +292,13 @@ func TestManagedWorker_ExecuteCmd_PIDFileWriting(t *testing.T) {
 
 	// Execute command
 	ctx := context.Background()
-	cmd, stdout, healthConfig, err := worker.ExecuteCmd(ctx)
+	process, stdout, healthConfig, err := worker.ExecuteCmd(ctx)
 
 	// Verify command execution
 	assert.NoError(t, err)
-	require.NotNil(t, cmd)
+	require.NotNil(t, process)
 	assert.NotNil(t, stdout)
 	assert.NotNil(t, healthConfig)
-	assert.NotNil(t, cmd.Process)
 
 	// Verify PID file was created
 	pidFilePath := worker.pidManager.GeneratePIDFilePath("test-worker")
@@ -336,15 +307,15 @@ func TestManagedWorker_ExecuteCmd_PIDFileWriting(t *testing.T) {
 	// Verify PID file content
 	content, err := os.ReadFile(pidFilePath)
 	assert.NoError(t, err)
-	expectedContent := fmt.Sprintf("%d\n", cmd.Process.Pid)
+	expectedContent := fmt.Sprintf("%d\n", process.Pid)
 	assert.Equal(t, expectedContent, string(content))
 
 	// Clean up
 	if stdout != nil {
 		stdout.Close()
 	}
-	if cmd != nil && cmd.Process != nil {
-		cmd.Process.Kill()
+	if process != nil {
+		process.Kill()
 	}
 }
 
@@ -371,12 +342,4 @@ func TestManagedWorker_MultipleInstances(t *testing.T) {
 	// Test independence
 	assert.NotEqual(t, worker1.ID(), worker2.ID())
 	assert.Equal(t, worker1.Metadata(), worker2.Metadata()) // Same unit, same metadata
-
-	// Test different PID files
-	options1 := worker1.ProcessControlOptions()
-	options2 := worker2.ProcessControlOptions()
-
-	assert.NotEqual(t, options1.Discovery.PIDFile, options2.Discovery.PIDFile)
-	assert.Contains(t, options1.Discovery.PIDFile, "worker-1")
-	assert.Contains(t, options2.Discovery.PIDFile, "worker-2")
 }
