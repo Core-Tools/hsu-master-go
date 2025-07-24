@@ -199,6 +199,36 @@ func (pc *processControl) Start(ctx context.Context) error {
 		return NewValidationError("context cannot be nil", nil)
 	}
 
+	return pc.startInternal(ctx)
+}
+
+func (pc *processControl) Stop(ctx context.Context) error {
+	// Validate context
+	if ctx == nil {
+		return NewValidationError("context cannot be nil", nil)
+	}
+
+	if pc.process == nil {
+		return NewProcessError("process not attached", nil)
+	}
+
+	return pc.stopInternal(ctx, false)
+}
+
+func (pc *processControl) Restart(ctx context.Context) error {
+	// Validate context
+	if ctx == nil {
+		return NewValidationError("context cannot be nil", nil)
+	}
+
+	if pc.process == nil {
+		return NewProcessError("process not attached", nil)
+	}
+
+	return pc.restartInternal(ctx)
+}
+
+func (pc *processControl) startInternal(ctx context.Context) error {
 	pc.logger.Infof("Starting process control for worker %s, can_attach: %t, can_execute: %t, can_terminate: %t",
 		pc.workerID, pc.config.CanAttach, (pc.config.ExecuteCmd != nil), pc.config.CanTerminate)
 
@@ -368,21 +398,8 @@ func (pc *processControl) Start(ctx context.Context) error {
 	return nil
 }
 
-func (pc *processControl) Stop(ctx context.Context) error {
-	return pc.doStop(ctx, false)
-}
-
-func (pc *processControl) doStop(ctx context.Context, attachConsole bool) error {
-	// Validate context
-	if ctx == nil {
-		return NewValidationError("context cannot be nil", nil)
-	}
-
+func (pc *processControl) stopInternal(ctx context.Context, idDeadPID bool) error {
 	pc.logger.Infof("Stopping process control...")
-
-	if pc.process == nil {
-		return NewProcessError("process not attached", nil)
-	}
 
 	// 1. Stop health monitor first
 	if pc.healthMonitor != nil {
@@ -401,7 +418,7 @@ func (pc *processControl) doStop(ctx context.Context, attachConsole bool) error 
 	}
 
 	// 3. Terminate the process gracefully with context
-	if err := pc.terminateProcess(ctx, attachConsole); err != nil {
+	if err := pc.terminateProcess(ctx, idDeadPID); err != nil {
 		pc.logger.Errorf("Failed to terminate process: %v", err)
 		return NewProcessError("failed to terminate process", err)
 	}
@@ -413,27 +430,18 @@ func (pc *processControl) doStop(ctx context.Context, attachConsole bool) error 
 	return nil
 }
 
-func (pc *processControl) Restart(ctx context.Context) error {
-	pc.logger.Infof("Restarting process control...")
-
-	// Store the original config for restart
-	if pc.process == nil {
-		return fmt.Errorf("process not attached")
-	}
-
-	return pc.restartInternal(ctx)
-}
-
 // restartInternal performs the actual restart without additional validation
 func (pc *processControl) restartInternal(ctx context.Context) error {
+	pc.logger.Infof("Restarting process control...")
+
 	// 1. Stop the current process
-	if err := pc.doStop(ctx, true); err != nil {
+	if err := pc.stopInternal(ctx, true); err != nil {
 		pc.logger.Errorf("Failed to stop process during restart: %v", err)
 		return fmt.Errorf("failed to stop process during restart: %v", err)
 	}
 
 	// 2. Start the process again
-	if err := pc.Start(ctx); err != nil {
+	if err := pc.startInternal(ctx); err != nil {
 		pc.logger.Errorf("Failed to start process during restart: %v", err)
 		return fmt.Errorf("failed to start process during restart: %v", err)
 	}
@@ -457,7 +465,7 @@ func (pc *processControl) resetCircuitBreaker() {
 }
 
 // terminateProcess handles graceful process termination with timeout and context cancellation
-func (pc *processControl) terminateProcess(ctx context.Context, attachConsole bool) error {
+func (pc *processControl) terminateProcess(ctx context.Context, idDeadPID bool) error {
 	if pc.process == nil {
 		return NewProcessError("no process to terminate", nil)
 	}
@@ -486,8 +494,11 @@ func (pc *processControl) terminateProcess(ctx context.Context, attachConsole bo
 	}()
 
 	// Try graceful termination first
-	pc.logger.Infof("Sending termination signal to process PID %d", pid)
-	if err := pc.sendTerminationSignal(attachConsole); err != nil {
+	pc.logger.Infof("Sending termination signal to PID %d, idDead: %t, timeout: %v", pid, idDeadPID, gracefulTimeout)
+	// Use the platform-specific termination signal
+	// On Unix: SIGTERM to process group
+	// On Windows: Ctrl-Break event
+	if err := sendTerminationSignal(pid, idDeadPID, gracefulTimeout); err != nil {
 		pc.logger.Warnf("Failed to send termination signal: %v", err)
 	}
 
@@ -508,8 +519,11 @@ func (pc *processControl) terminateProcess(ctx context.Context, attachConsole bo
 	}
 
 	// Force termination if graceful didn't work
-	if err := pc.forceTermination(); err != nil {
-		return NewProcessError("force termination failed", err).WithContext("pid", pid)
+	pc.logger.Warnf("Force killing process PID %d", pid)
+
+	// Use Kill() which sends SIGKILL on Unix and TerminateProcess on Windows
+	if err := pc.process.Kill(); err != nil {
+		return NewProcessError("failed to kill process", err).WithContext("pid", pid)
 	}
 
 	// Wait for forced termination (with shorter timeout) or context cancellation
@@ -526,35 +540,4 @@ func (pc *processControl) terminateProcess(ctx context.Context, attachConsole bo
 		pc.logger.Warnf("Context cancelled during force termination of PID %d", pid)
 		return NewCancelledError("termination cancelled", ctx.Err()).WithContext("pid", pid)
 	}
-}
-
-// sendTerminationSignal sends a graceful termination signal to the process
-func (pc *processControl) sendTerminationSignal(attachConsole bool) error {
-	if pc.process == nil {
-		return NewProcessError("no process to signal", nil)
-	}
-
-	// Use the platform-specific termination signal
-	// On Unix: SIGTERM to process group
-	// On Windows: Ctrl-Break event
-	if err := pc.sendGracefulSignal(attachConsole); err != nil {
-		return NewProcessError("failed to send graceful signal", err).WithContext("pid", pc.process.Pid)
-	}
-	return nil
-}
-
-// forceTermination forcefully terminates the process
-func (pc *processControl) forceTermination() error {
-	if pc.process == nil {
-		return NewProcessError("no process to kill", nil)
-	}
-
-	pc.logger.Warnf("Force killing process PID %d", pc.process.Pid)
-
-	// Use Kill() which sends SIGKILL on Unix and TerminateProcess on Windows
-	if err := pc.process.Kill(); err != nil {
-		return NewProcessError("failed to kill process", err).WithContext("pid", pc.process.Pid)
-	}
-
-	return nil
 }

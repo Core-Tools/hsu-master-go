@@ -123,13 +123,6 @@ func NewStdExecuteCmd(execution ExecutionConfig, logger logging.Logger) StdExecu
 		cmd.Dir = workDir
 		cmd.Env = env
 
-		/*
-			err := resetConsoleSignals(false)
-			if err != nil {
-				return nil, nil, NewInternalError("failed to reset console signals", err)
-			}
-		*/
-
 		// Platform-specific setup is handled in process_windows.go or process_unix.go
 		setupProcessAttributes(cmd)
 
@@ -148,13 +141,6 @@ func NewStdExecuteCmd(execution ExecutionConfig, logger logging.Logger) StdExecu
 		if err != nil {
 			return nil, nil, NewProcessError("failed to start the process", err).WithContext("executable_path", execution.ExecutablePath)
 		}
-
-		/*
-			err = resetConsoleSignals(true)
-			if err != nil {
-				return nil, nil, NewInternalError("failed to reset console signals", err)
-			}
-		*/
 
 		return cmd, stdout, nil
 	}

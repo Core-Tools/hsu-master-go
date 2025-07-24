@@ -49,7 +49,7 @@ Through extensive research and testing, we discovered that calling `AttachConsol
 // Before restarting a dead worker:
 func consoleSignalFix(deadPID int) error {
     // Verify PID is actually dead
-    if isProcessAlive(deadPID) {
+    if isProcessRunning(deadPID) {
         return fmt.Errorf("cannot use alive process for console fix")
     }
     
@@ -79,7 +79,7 @@ When `AttachConsole` is called on a dead PID:
 
 ### **Process Liveness Detection**
 ```go
-func isProcessAlive(pid int) bool {
+func isProcessRunning(pid int) bool {
     handle, err := syscall.OpenProcess(
         syscall.PROCESS_QUERY_LIMITED_INFORMATION,
         false, uint32(pid),
@@ -98,7 +98,7 @@ func isProcessAlive(pid int) bool {
 ### **Timeout Protection**
 ```go
 func sendCtrlBreakToProcessSafe(pid int, timeout time.Duration) error {
-    if !isProcessAlive(pid) {
+    if !isProcessRunning(pid) {
         return fmt.Errorf("process PID %d not alive, skipping signal", pid)
     }
     
@@ -136,7 +136,7 @@ func consoleSignalFix(deadPID int) error {
 1. **During Worker Restart**:
    ```go
    // In process_control.go restartInternal()
-   if err := pc.doStop(ctx, true); err != nil {  // attachConsole=true
+   if err := pc.stopInternal(ctx, true); err != nil {  // idDeadPID=true
        return err
    }
    ```
@@ -144,7 +144,7 @@ func consoleSignalFix(deadPID int) error {
 2. **In Process Termination**:
    ```go
    // In sendGracefulSignal()
-   if attachConsole {
+   if idDeadPID {
        return consoleSignalFix(pid)  // Apply fix for dead PID
    } else {
        return sendCtrlBreakToProcessSafe(pid, 10*time.Second)  // Signal alive PID

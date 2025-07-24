@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -465,39 +464,12 @@ func (h *healthMonitor) checkProcess() (bool, string) {
 func (h *healthMonitor) checkProcessWithInfo() (bool, string) {
 	pid := h.processInfo.PID
 
-	// Check if process exists using cross-platform approach
-	exists, err := isProcessRunning(pid)
-	if err != nil {
-		return false, fmt.Sprintf("Process check failed: PID %d, error: %v", pid, err)
-	}
-
-	if !exists {
+	// Check if process running
+	if !isProcessRunning(pid) {
 		return false, fmt.Sprintf("Process not running: PID %d", pid)
 	}
 
 	return true, fmt.Sprintf("Process is running: PID %d", pid)
-}
-
-// isProcessRunning checks if a process with the given PID is running (cross-platform)
-func isProcessRunning(pid int) (bool, error) {
-	if pid <= 0 {
-		return false, fmt.Errorf("invalid PID: %d", pid)
-	}
-
-	process, err := os.FindProcess(pid)
-	if err != nil {
-		// On Unix, FindProcess always succeeds if PID > 0
-		// On Windows, FindProcess fails if process doesn't exist
-		return false, nil
-	}
-
-	// Use the existing platform-specific verification logic
-	if err := verifyProcessRunning(process); err != nil {
-		// Process doesn't exist or is not running
-		return false, nil
-	}
-
-	return true, nil
 }
 
 func (h *healthMonitor) checkProcessBasic() (bool, string) {

@@ -50,12 +50,6 @@ type Master struct {
 }
 
 func NewMaster(options MasterOptions, coreLogger coreLogging.Logger, masterLogger masterLogging.Logger) (*Master, error) {
-	// Prepare OS console
-	err := prepareOSConsole()
-	if err != nil {
-		return nil, NewInternalError("failed to prepare OS console", err)
-	}
-
 	// Create gRPC server
 	serverOptions := coreControl.ServerOptions{
 		Port: options.Port,
