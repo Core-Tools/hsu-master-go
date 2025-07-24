@@ -27,7 +27,14 @@ func NewStdExecuteCmd(execution ExecutionConfig, id string, logger logging.Logge
 	return func(ctx context.Context) (*os.Process, io.ReadCloser, error) {
 		// Validate context
 		if ctx == nil {
+			logger.Errorf("Context cannot be nil, id: %s", id)
 			return nil, nil, errors.NewValidationError("context cannot be nil", nil).WithContext("id", id)
+		}
+
+		// Validate execution configuration
+		if err := ValidateExecutionConfig(execution); err != nil {
+			logger.Errorf("Execution configuration validation failed, id: %s, error: %v", id, err)
+			return nil, nil, errors.NewValidationError("invalid execution configuration", err).WithContext("id", id)
 		}
 
 		logger.Infof("Executing process, id: %s, execution config: %+v", id, execution)

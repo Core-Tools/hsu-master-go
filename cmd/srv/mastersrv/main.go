@@ -7,8 +7,8 @@ import (
 	sprintfLogging "github.com/core-tools/hsu-core/pkg/logging/sprintf"
 
 	coreLogging "github.com/core-tools/hsu-core/pkg/logging"
-	domain "github.com/core-tools/hsu-master/cmd/srv/domain"
 	masterLogging "github.com/core-tools/hsu-master/pkg/logging"
+	master "github.com/core-tools/hsu-master/pkg/master"
 
 	flags "github.com/jessevdk/go-flags"
 )
@@ -53,7 +53,7 @@ func main() {
 	// Run with configuration file
 	logger.Infof("Starting HSU Master with configuration file: %s", opts.Config)
 
-	err = domain.RunWithConfig(opts.Config, coreLogger, masterLogger)
+	err = master.RunWithConfig(opts.Config, coreLogger, masterLogger)
 	if err != nil {
 		logger.Errorf("Failed to run with configuration: %v", err)
 		os.Exit(1)
