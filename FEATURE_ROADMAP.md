@@ -2,7 +2,7 @@
 
 **Project Vision**: "Kubernetes for Native Applications" - A production-ready process manager with enterprise-grade features
 
-## 🎯 **Current Status**: Phase 3 (Enhancement) - Partially Complete
+## 🎯 **Current Status**: Phase 3 (Enhancement) - Mostly Complete
 
 ---
 
@@ -26,9 +26,9 @@
 | ✅ UnmanagedWorker Implementation | **DONE** | Complete unmanaged worker for existing processes |
 | ⏳ Health Check Implementations | **PENDING** | Complete HTTP/gRPC/TCP/Exec health checkers |
 | ✅ Configuration Validation | **DONE** | Comprehensive input validation |
-| ✅ Resource Management | **DONE** | CPU/Memory limits and resource tracking |
+| ⏳ Resource Limits Implementation | **PENDING** | CPU/Memory limits enforcement and monitoring |
 
-**Remaining Phase 2 Items**: Health check implementations (HTTP, gRPC, TCP, Exec)
+**Remaining Phase 2 Items**: Health check implementations (HTTP, gRPC, TCP, Exec), Resource limits implementation
 
 ---
 
@@ -41,8 +41,9 @@
 | ✅ Worker State Machines | **DONE** | Prevent race conditions and duplicate operations | **HIGH** |
 | ✅ Master-First Architecture | **DONE** | Clean startup sequence and code simplification | **HIGH** |
 | ✅ Configuration-Driven Architecture | **DONE** | YAML-based worker configuration | **HIGH** |
+| ✅ Package Architecture Refactoring | **DONE** | Modular workers subdomain with processcontrol/wokerstatemachine packages | **HIGH** |
+| ✅ Windows Console Signal Fix | **DONE** | AttachConsole dead PID hack for robust Ctrl+C handling | **HIGH** |
 | 📝 Event System & Metrics | **PLANNED** | Event-driven architecture and monitoring | **MEDIUM** |
-| 📝 Advanced Scheduling | **PLANNED** | Resource limits and process scheduling | **MEDIUM** |
 | 📝 Performance Optimizations | **PLANNED** | Production-scale performance tuning | **LOW** |
 
 ### **Production Features**
@@ -80,64 +81,64 @@
 
 ---
 
-## 🎯 **Next Sprint: Configuration-Driven Architecture** ✅ **COMPLETED**
+## 🎯 **Previous Sprint: Package Architecture Refactoring** ✅ **COMPLETED**
 
 ### **Sprint Results**
 
 | Task | Status | Completion |
 |------|--------|------------|
-| ✅ YAML Configuration Schema | **DONE** | Comprehensive configuration structures with YAML tags |
-| ✅ Configuration Loading | **DONE** | LoadConfigFromFile with validation and defaults |
-| ✅ Domain Package Functions | **DONE** | RunWithConfig, CreateWorkersFromConfig, validation |
-| ✅ Updated main.go | **DONE** | Dual-mode support (config file + legacy flags) |
-| ✅ Example Configurations | **DONE** | Comprehensive and simple examples provided |
+| ✅ ProcessControl Interface Extraction | **DONE** | Clean interface separation in `workers/processcontrol/` |
+| ✅ State Machine Package Split | **DONE** | Worker state logic moved to `workers/wokerstatemachine/` |
+| ✅ Implementation Encapsulation | **DONE** | ProcessControl implementation in `workers/processcontrolimpl/` |
+| ✅ Nested Package Structure | **DONE** | Clear domain ownership through package organization |
+| ✅ Interface Migration | **DONE** | All workers updated to use new package structure |
 
 ### **Implementation Highlights**
-- **📁 New Files Created**: `config.go`, `master_runner.go`, `config_test.go`
-- **🏗️ YAML Support**: Added YAML tags to all configuration structs
-- **✅ Full Validation**: Comprehensive configuration validation with helpful errors
-- **🔄 Backward Compatibility**: Legacy flag-based mode still available
-- **📖 Examples**: Production-ready configuration examples
-- **🧪 Testing**: Comprehensive test coverage for all configuration features
+- **🏗️ Modular Architecture**: Split monolithic process_control.go into focused packages
+- **📦 Clean Dependencies**: No circular imports, proper hierarchical structure
+- **🔌 Interface Design**: Separated ProcessControl interface from implementation
+- **📁 Domain Organization**: Nested packages show clear ownership relationships
+- **🧪 Testing**: Maintained all existing functionality during refactoring
 
 ### **Definition of Done**
-- ✅ YAML configuration loads successfully
-- ✅ All existing unit types supported in config
-- ✅ Validation with clear error messages
-- ✅ Backward compatibility maintained
-- ✅ Example configurations provided
-- ✅ Documentation updated
+- ✅ ProcessControl interface extracted to separate package
+- ✅ State machine logic moved to dedicated package
+- ✅ Implementation hidden in internal package
+- ✅ All imports updated and working
+- ✅ Tests passing and functionality preserved
 
 ---
 
-## 🎯 **Next Sprint: Health Check & API Management**
+## 🎯 **Current Sprint: Resource Limits & Health Checks**
 
-### **Upcoming Sprint Goals**
+### **Current Sprint Goals**
 
 | Task | Status | Priority | Estimated Effort |
 |------|--------|----------|------------------|
+| 📝 Resource Limits Implementation | **IN PROGRESS** | **HIGH** | 6-8 hours |
 | 📝 Complete Health Check Implementations | **PLANNED** | **HIGH** | 3-4 hours |
 | 📝 REST API for Worker Management | **PLANNED** | **HIGH** | 4-5 hours |
-| 📝 CLI Tool Development | **PLANNED** | **HIGH** | 2-3 hours |
-| 📝 Advanced YAML Features | **PLANNED** | **MEDIUM** | 2-3 hours |
+| 📝 CLI Tool Development | **PLANNED** | **MEDIUM** | 2-3 hours |
 
 ### **Focus Areas**
+- **Resource Management**: Implement CPU/memory limits with monitoring and enforcement
 - **Production Readiness**: Complete remaining Phase 2 items
 - **Operational Excellence**: API and CLI for day-to-day management
-- **Advanced Configuration**: YAML inheritance and environment substitution
 
 ---
 
 ## 💡 **Future Feature Ideas**
 
 ### **Architectural Improvements (From Assessment v2.0)**
-- **Package Boundary Refinements**: 
-  - Consider `pkg/processcontrol` split from `workers` package
-  - Hybrid configuration validation approach
-  - Optional monitoring package split (`pkg/health` + `pkg/restart`)
-- **Circuit Breaker Enhancement**: Evaluate placement options
-- **Interface Standardization**: Further interface-based design improvements
-- **Plugin Architecture**: Worker plugin system for extensibility
+- ✅ **Package Boundary Refinements**: 
+  - ✅ `pkg/workers/processcontrol` split from workers package (COMPLETED)
+  - ✅ `pkg/workers/workerstatemachine` package for state machine logic (COMPLETED)
+  - ✅ `pkg/workers/processcontrolimpl` for implementation encapsulation (COMPLETED)
+  - 📝 Hybrid configuration validation approach
+  - 📝 Optional monitoring package split (`pkg/health` + `pkg/restart`)
+- 📝 **Circuit Breaker Enhancement**: Evaluate placement options
+- ✅ **Interface Standardization**: ProcessControl interface extraction (COMPLETED)
+- 📝 **Plugin Architecture**: Worker plugin system for extensibility
 
 ### **Configuration System Enhancements**
 - **YAML Inheritance & Templates**: Reusable configuration patterns
@@ -168,12 +169,78 @@
 - **Traffic Routing**: Load balancing between process instances
 - **Circuit Breakers**: Failure isolation patterns
 
+### **🔥 Resource Limits & Monitoring (NEW FEATURE)**
+
+#### **Resource Limit Types**
+- **Memory Limits**: RSS, virtual memory, heap limits
+- **CPU Limits**: CPU percentage, execution time, nice values
+- **I/O Limits**: Disk read/write rates, file descriptor counts
+- **Network Limits**: Connection counts, bandwidth usage
+- **Storage Limits**: Temporary files, log file sizes
+
+#### **Enforcement Strategies**
+- **Startup Enforcement**: Set OS-level limits (ulimit, cgroups, Windows job objects)
+- **Runtime Monitoring**: Periodic resource usage checks
+- **Threshold-Based Actions**: Configurable actions when limits approached/exceeded
+- **Cross-Platform Support**: Native OS mechanisms (Linux cgroups, Windows job objects, macOS sandbox)
+
+#### **Limit Violation Policies**
+- **Immediate Termination**: Kill process immediately when limit exceeded
+- **Graceful Shutdown**: Send termination signal with timeout before force kill
+- **Restart with Adjusted Limits**: Automatic restart with increased/decreased limits
+- **Alert Only**: Log warnings and send notifications without termination
+- **Throttling**: Suspend/resume process to stay within limits (where supported)
+- **Escalation**: Progressive actions (warn → throttle → terminate)
+
+#### **Monitoring & Reporting**
+- **Real-time Metrics**: Current CPU, memory, I/O usage
+- **Historical Tracking**: Resource usage trends over time
+- **Alerting Integration**: Notifications when limits approached
+- **Health Check Integration**: Resource usage as health indicator
+- **Metrics Export**: Prometheus-compatible metrics for external monitoring
+
+#### **Configuration Example**
+```yaml
+workers:
+  - id: "memory-limited-worker"
+    type: "managed"
+    unit:
+      managed:
+        control:
+          limits:
+            memory:
+              max_rss: "512MB"
+              max_virtual: "1GB"
+              policy: "graceful_shutdown"
+              warning_threshold: 80  # %
+            cpu:
+              max_percent: 50
+              max_time: "1h"
+              policy: "throttle"
+            io:
+              max_read_rate: "100MB/s"
+              max_write_rate: "50MB/s"
+              max_file_descriptors: 1024
+              policy: "alert_only"
+          resource_monitoring:
+            enabled: true
+            interval: "30s"
+            history_retention: "24h"
+```
+
+#### **Implementation Plan**
+1. **Phase 1**: Basic memory/CPU limits with immediate termination
+2. **Phase 2**: Advanced policies (graceful shutdown, throttling)
+3. **Phase 3**: I/O and network limits
+4. **Phase 4**: Cross-platform optimization and advanced monitoring
+
 ---
 
 ## 🏗️ **Technical Debt & Refactoring**
 
 | Item | Priority | Description |
 |------|----------|-------------|
+| Resource Limits Implementation | **HIGH** | Complete CPU/memory limits enforcement and monitoring |
 | Health Check Completion | **HIGH** | Complete HTTP/gRPC/TCP/Exec implementations |
 | Test Coverage Expansion | **MEDIUM** | Integration tests and end-to-end scenarios |
 | Documentation Enhancement | **MEDIUM** | API docs, examples, deployment guides |
@@ -184,14 +251,17 @@
 ## 🎮 **Release Planning**
 
 ### **v0.1.0 - MVP Release** (Current Target)
-- ✅ All Phase 1 & 2 features
+- ✅ All Phase 1 & 2 core features
 - ✅ Worker state machines
 - ✅ Master-first architecture
-- 🚧 Configuration-driven setup
+- ✅ Configuration-driven setup
+- ✅ Package architecture refactoring
 - ⏳ Basic health check implementations
+- ⏳ Resource limits implementation
 
 ### **v0.2.0 - Production Beta**
 - 📝 REST API & CLI
+- 📝 Advanced resource monitoring & policies
 - 📝 Advanced YAML features
 - 📝 Monitoring integration
 - 📝 Performance optimizations
@@ -219,5 +289,5 @@
 
 ---
 
-*Last Updated: December 2024*  
-*Next Review: After Configuration-Driven Architecture completion* 
+*Last Updated: January 2025*  
+*Next Review: After Resource Limits Implementation completion* 
