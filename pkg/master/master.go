@@ -9,12 +9,12 @@ import (
 	coreControl "github.com/core-tools/hsu-core/pkg/control"
 	coreDomain "github.com/core-tools/hsu-core/pkg/domain"
 	coreLogging "github.com/core-tools/hsu-core/pkg/logging"
-	"github.com/core-tools/hsu-master-go/pkg/workers/processcontrolimpl"
 	masterControl "github.com/core-tools/hsu-master/pkg/control"
 	"github.com/core-tools/hsu-master/pkg/errors"
 	masterLogging "github.com/core-tools/hsu-master/pkg/logging"
 	"github.com/core-tools/hsu-master/pkg/workers"
 	"github.com/core-tools/hsu-master/pkg/workers/processcontrol"
+	"github.com/core-tools/hsu-master/pkg/workers/processcontrolimpl"
 	"github.com/core-tools/hsu-master/pkg/workers/workerstatemachine"
 )
 
