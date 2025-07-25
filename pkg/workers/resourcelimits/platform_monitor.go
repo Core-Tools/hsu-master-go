@@ -7,19 +7,17 @@ import (
 	"github.com/core-tools/hsu-master/pkg/logging"
 )
 
+// Platform-specific constructor functions are implemented in platform_monitor_*.go files
+
 // newPlatformResourceMonitor creates platform-specific resource monitor
 func newPlatformResourceMonitor(logger logging.Logger) PlatformResourceMonitor {
-	switch runtime.GOOS {
-	case "windows":
-		return newWindowsResourceMonitor(logger)
-	case "linux":
-		return newLinuxResourceMonitor(logger)
-	case "darwin":
-		return newDarwinResourceMonitor(logger)
-	default:
-		logger.Warnf("Resource monitoring not optimized for platform: %s, using generic implementation", runtime.GOOS)
-		return newGenericResourceMonitor(logger)
+	// Try to create platform-specific monitor, fall back to generic
+	if monitor := createPlatformSpecificMonitor(logger); monitor != nil {
+		return monitor
 	}
+
+	logger.Warnf("Resource monitoring not optimized for platform: %s, using generic implementation", runtime.GOOS)
+	return newGenericResourceMonitor(logger)
 }
 
 // genericResourceMonitor provides basic cross-platform monitoring using Go's built-in capabilities
@@ -61,65 +59,6 @@ func (g *genericResourceMonitor) SupportsRealTimeMonitoring() bool {
 	return false // Generic implementation doesn't support real-time monitoring
 }
 
-// windowsResourceMonitor provides Windows-specific monitoring
-type windowsResourceMonitor struct {
-	logger logging.Logger
-}
+// windowsResourceMonitor is implemented in platform_monitor_windows.go
 
-func newWindowsResourceMonitor(logger logging.Logger) PlatformResourceMonitor {
-	return &windowsResourceMonitor{
-		logger: logger,
-	}
-}
-
-func (w *windowsResourceMonitor) GetProcessUsage(pid int) (*ResourceUsage, error) {
-	// TODO: Implement Windows-specific resource monitoring using WMI or Performance Counters
-	w.logger.Debugf("Windows resource monitoring for PID %d - using generic implementation for now", pid)
-	return newGenericResourceMonitor(w.logger).GetProcessUsage(pid)
-}
-
-func (w *windowsResourceMonitor) SupportsRealTimeMonitoring() bool {
-	return true // Windows supports real-time monitoring via Performance Counters
-}
-
-// linuxResourceMonitor provides Linux-specific monitoring
-type linuxResourceMonitor struct {
-	logger logging.Logger
-}
-
-func newLinuxResourceMonitor(logger logging.Logger) PlatformResourceMonitor {
-	return &linuxResourceMonitor{
-		logger: logger,
-	}
-}
-
-func (l *linuxResourceMonitor) GetProcessUsage(pid int) (*ResourceUsage, error) {
-	// TODO: Implement Linux-specific resource monitoring using /proc filesystem
-	l.logger.Debugf("Linux resource monitoring for PID %d - using generic implementation for now", pid)
-	return newGenericResourceMonitor(l.logger).GetProcessUsage(pid)
-}
-
-func (l *linuxResourceMonitor) SupportsRealTimeMonitoring() bool {
-	return true // Linux supports real-time monitoring via /proc filesystem
-}
-
-// darwinResourceMonitor provides macOS-specific monitoring
-type darwinResourceMonitor struct {
-	logger logging.Logger
-}
-
-func newDarwinResourceMonitor(logger logging.Logger) PlatformResourceMonitor {
-	return &darwinResourceMonitor{
-		logger: logger,
-	}
-}
-
-func (d *darwinResourceMonitor) GetProcessUsage(pid int) (*ResourceUsage, error) {
-	// TODO: Implement macOS-specific resource monitoring using libproc or sysctl
-	d.logger.Debugf("macOS resource monitoring for PID %d - using generic implementation for now", pid)
-	return newGenericResourceMonitor(d.logger).GetProcessUsage(pid)
-}
-
-func (d *darwinResourceMonitor) SupportsRealTimeMonitoring() bool {
-	return true // macOS supports real-time monitoring via system APIs
-}
+// linuxResourceMonitor and darwinResourceMonitor are implemented in platform_monitor_linux.go and platform_monitor_darwin.go

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"sync"
 	"time"
 
 	"github.com/core-tools/hsu-master/pkg/errors"
@@ -24,17 +23,21 @@ type processControl struct {
 	workerID      string
 
 	// Persistent restart tracking (survives health monitor recreation)
-	restartAttempts    int        // Track attempts across health monitor restarts
-	lastRestartTime    time.Time  // Track timing for retry delay and backoff
-	circuitBreakerOpen bool       // Circuit breaker to stop excessive restarts
-	mutex              sync.Mutex // Protect restart state
+	restartCircuitBreaker RestartCircuitBreaker
 }
 
 func NewProcessControl(config processcontrol.ProcessControlOptions, workerID string, logger logging.Logger) processcontrol.ProcessControl {
+	var restartCircuitBreaker RestartCircuitBreaker
+	if config.Restart != nil && config.CanRestart {
+		restartCircuitBreaker = NewRestartCircuitBreaker(
+			config.Restart, workerID, logger)
+	}
+
 	return &processControl{
-		config:   config,
-		logger:   logger,
-		workerID: workerID,
+		config:                config,
+		logger:                logger,
+		workerID:              workerID,
+		restartCircuitBreaker: restartCircuitBreaker,
 	}
 }
 
@@ -197,90 +200,26 @@ func (pc *processControl) startHealthCheck(pid int, healthCheckConfig *monitorin
 	}
 
 	if err != nil {
-		pc.logger.Errorf("Failed to create health monitor, id: %s, error: %v", pc.workerID, err)
+		pc.logger.Errorf("Failed to create health monitor, worker: %s, error: %v", pc.workerID, err)
 		return nil, errors.NewInternalError("failed to create health monitor", err).WithContext("id", pc.workerID)
 	}
 
 	// Set up restart callback if restart is enabled
-	if pc.config.Restart != nil && pc.config.CanRestart {
+	if pc.restartCircuitBreaker != nil {
 		healthMonitor.SetRestartCallback(func(reason string) error {
-			pc.logger.Warnf("Health monitor requesting restart, worker: %s, reason: %s", pc.workerID, reason)
-
-			pc.mutex.Lock()
-			defer pc.mutex.Unlock()
-
-			// Check circuit breaker
-			if pc.circuitBreakerOpen {
-				pc.logger.Errorf("Circuit breaker is open, ignoring restart request, worker: %s, attempts: %d",
-					pc.workerID, pc.restartAttempts)
-				return fmt.Errorf("restart circuit breaker is open")
+			pc.logger.Warnf("Restart requested, worker: %s, reason: %s", pc.workerID, reason)
+			wrappedRestart := func() error {
+				// Use a background context for restart since this is triggered by health failure
+				ctx := context.Background()
+				return pc.restartInternal(ctx)
 			}
-
-			// Check max retries
-			if pc.config.Restart.MaxRetries > 0 && pc.restartAttempts >= pc.config.Restart.MaxRetries {
-				pc.logger.Errorf("Max restart retries exceeded, opening circuit breaker, worker: %s, attempts: %d, max: %d",
-					pc.workerID, pc.restartAttempts, pc.config.Restart.MaxRetries)
-				pc.circuitBreakerOpen = true
-				return fmt.Errorf("max restart retries exceeded: %d", pc.restartAttempts)
-			}
-
-			// Calculate retry delay with exponential backoff
-			now := time.Now()
-			timeSinceLastRestart := now.Sub(pc.lastRestartTime)
-
-			retryDelay := pc.config.Restart.RetryDelay
-			if pc.restartAttempts > 0 {
-				// Apply exponential backoff
-				backoffMultiplier := 1.0
-				for i := 0; i < pc.restartAttempts; i++ {
-					backoffMultiplier *= pc.config.Restart.BackoffRate
-				}
-				retryDelay = time.Duration(float64(retryDelay) * backoffMultiplier)
-			}
-
-			// Enforce retry delay
-			if timeSinceLastRestart < retryDelay {
-				waitTime := retryDelay - timeSinceLastRestart
-				pc.logger.Infof("Enforcing retry delay, worker: %s, attempt: %d, waiting: %v",
-					pc.workerID, pc.restartAttempts+1, waitTime)
-
-				// Release lock during sleep to prevent deadlock
-				pc.mutex.Unlock()
-				time.Sleep(waitTime)
-				pc.mutex.Lock()
-
-				// Re-check circuit breaker after sleep
-				if pc.circuitBreakerOpen {
-					return fmt.Errorf("restart circuit breaker opened during delay")
-				}
-			}
-
-			// Increment attempt counter and update timestamp
-			pc.restartAttempts++
-			pc.lastRestartTime = time.Now()
-
-			pc.logger.Warnf("Proceeding with restart, worker: %s, attempt: %d/%d, delay: %v",
-				pc.workerID, pc.restartAttempts, pc.config.Restart.MaxRetries, retryDelay)
-
-			// Release lock before calling restart to prevent deadlock
-			pc.mutex.Unlock()
-			defer func() { pc.mutex.Lock() }()
-
-			// Use a background context for restart since this is triggered by health failure
-			ctx := context.Background()
-			if err := pc.restartInternal(ctx); err != nil {
-				pc.logger.Errorf("Failed to restart process, worker: %s, error: %v", pc.workerID, err)
-				return err
-			}
-
-			pc.logger.Infof("Process restart completed, worker: %s, attempt: %d", pc.workerID, pc.restartAttempts)
-			return nil
+			return pc.restartCircuitBreaker.ExecuteRestart(wrappedRestart)
 		})
 
 		// Set up recovery callback to reset circuit breaker when process becomes healthy
 		healthMonitor.SetRecoveryCallback(func() {
 			pc.logger.Infof("Health recovered, resetting circuit breaker, worker: %s", pc.workerID)
-			pc.resetCircuitBreaker()
+			pc.restartCircuitBreaker.Reset()
 		})
 	}
 
@@ -341,20 +280,6 @@ func (pc *processControl) restartInternal(ctx context.Context) error {
 
 	pc.logger.Infof("Process control restarted successfully")
 	return nil
-}
-
-// resetCircuitBreaker resets the circuit breaker when process runs successfully
-func (pc *processControl) resetCircuitBreaker() {
-	pc.mutex.Lock()
-	defer pc.mutex.Unlock()
-
-	if pc.restartAttempts > 0 || pc.circuitBreakerOpen {
-		pc.logger.Infof("Resetting circuit breaker, worker: %s, previous attempts: %d",
-			pc.workerID, pc.restartAttempts)
-		pc.restartAttempts = 0
-		pc.circuitBreakerOpen = false
-		pc.lastRestartTime = time.Time{} // Reset timestamp
-	}
 }
 
 // terminateProcess handles graceful process termination with timeout and context cancellation

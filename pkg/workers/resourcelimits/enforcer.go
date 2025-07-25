@@ -258,9 +258,7 @@ func (re *resourceEnforcer) applyLinuxMemoryLimits(pid int, limits *MemoryLimits
 }
 
 func (re *resourceEnforcer) applyWindowsMemoryLimits(pid int, limits *MemoryLimits) error {
-	re.logger.Debugf("Windows memory limits for PID %d - implementation pending", pid)
-	// TODO: Implement using Job Objects
-	return nil
+	return applyWindowsMemoryLimitsImpl(pid, limits, re.logger)
 }
 
 func (re *resourceEnforcer) applyDarwinMemoryLimits(pid int, limits *MemoryLimits) error {
@@ -276,9 +274,7 @@ func (re *resourceEnforcer) applyLinuxCPULimits(pid int, limits *CPULimits) erro
 }
 
 func (re *resourceEnforcer) applyWindowsCPULimits(pid int, limits *CPULimits) error {
-	re.logger.Debugf("Windows CPU limits for PID %d - implementation pending", pid)
-	// TODO: Implement using Job Objects CPU rate limiting
-	return nil
+	return applyWindowsCPULimitsImpl(pid, limits, re.logger)
 }
 
 func (re *resourceEnforcer) applyDarwinCPULimits(pid int, limits *CPULimits) error {
