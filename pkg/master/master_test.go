@@ -13,6 +13,8 @@ import (
 	"github.com/core-tools/hsu-master/pkg/monitoring"
 	"github.com/core-tools/hsu-master/pkg/process"
 	"github.com/core-tools/hsu-master/pkg/workers"
+	"github.com/core-tools/hsu-master/pkg/workers/processcontrol"
+	"github.com/core-tools/hsu-master/pkg/workers/workerstatemachine"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -34,9 +36,9 @@ func (m *MockWorker) Metadata() workers.UnitMetadata {
 	return args.Get(0).(workers.UnitMetadata)
 }
 
-func (m *MockWorker) ProcessControlOptions() workers.ProcessControlOptions {
+func (m *MockWorker) ProcessControlOptions() processcontrol.ProcessControlOptions {
 	args := m.Called()
-	return args.Get(0).(workers.ProcessControlOptions)
+	return args.Get(0).(processcontrol.ProcessControlOptions)
 }
 
 // MockLogger is a mock implementation of Logger for testing
@@ -110,7 +112,7 @@ func createTestWorker(id string) *MockWorker {
 		return process, stdout, nil, err
 	}
 
-	worker.On("ProcessControlOptions").Return(workers.ProcessControlOptions{
+	worker.On("ProcessControlOptions").Return(processcontrol.ProcessControlOptions{
 		CanAttach:    true,
 		CanTerminate: true,
 		CanRestart:   true,
@@ -218,9 +220,9 @@ func TestMaster_RemoveWorker(t *testing.T) {
 		workerEntry, _, exists := master.getWorkerAndMasterState("running-worker")
 		require.True(t, exists)
 		// registered -> starting -> running
-		err = workerEntry.StateMachine.Transition(workers.WorkerStateStarting, "start", nil)
+		err = workerEntry.StateMachine.Transition(workerstatemachine.WorkerStateStarting, "start", nil)
 		require.NoError(t, err)
-		err = workerEntry.StateMachine.Transition(workers.WorkerStateRunning, "start", nil)
+		err = workerEntry.StateMachine.Transition(workerstatemachine.WorkerStateRunning, "start", nil)
 		require.NoError(t, err)
 
 		// Should not be able to remove running worker
@@ -233,7 +235,7 @@ func TestMaster_RemoveWorker(t *testing.T) {
 		// Worker should still exist
 		state, err := master.GetWorkerState("running-worker")
 		assert.NoError(t, err)
-		assert.Equal(t, workers.WorkerStateRunning, state)
+		assert.Equal(t, workerstatemachine.WorkerStateRunning, state)
 	})
 
 	t.Run("can_remove_stopped_worker", func(t *testing.T) {
@@ -248,13 +250,13 @@ func TestMaster_RemoveWorker(t *testing.T) {
 		workerEntry, _, exists := master.getWorkerAndMasterState("stopped-worker")
 		require.True(t, exists)
 		// registered -> starting -> running -> stopping -> stopped
-		err = workerEntry.StateMachine.Transition(workers.WorkerStateStarting, "start", nil)
+		err = workerEntry.StateMachine.Transition(workerstatemachine.WorkerStateStarting, "start", nil)
 		require.NoError(t, err)
-		err = workerEntry.StateMachine.Transition(workers.WorkerStateRunning, "start", nil)
+		err = workerEntry.StateMachine.Transition(workerstatemachine.WorkerStateRunning, "start", nil)
 		require.NoError(t, err)
-		err = workerEntry.StateMachine.Transition(workers.WorkerStateStopping, "stop", nil)
+		err = workerEntry.StateMachine.Transition(workerstatemachine.WorkerStateStopping, "stop", nil)
 		require.NoError(t, err)
-		err = workerEntry.StateMachine.Transition(workers.WorkerStateStopped, "stop", nil)
+		err = workerEntry.StateMachine.Transition(workerstatemachine.WorkerStateStopped, "stop", nil)
 		require.NoError(t, err)
 
 		// Should be able to remove stopped worker
@@ -279,9 +281,9 @@ func TestMaster_RemoveWorker(t *testing.T) {
 		workerEntry, _, exists := master.getWorkerAndMasterState("failed-worker")
 		require.True(t, exists)
 		// registered -> starting -> failed (start operation failed)
-		err = workerEntry.StateMachine.Transition(workers.WorkerStateStarting, "start", nil)
+		err = workerEntry.StateMachine.Transition(workerstatemachine.WorkerStateStarting, "start", nil)
 		require.NoError(t, err)
-		err = workerEntry.StateMachine.Transition(workers.WorkerStateFailed, "start", fmt.Errorf("test failure"))
+		err = workerEntry.StateMachine.Transition(workerstatemachine.WorkerStateFailed, "start", fmt.Errorf("test failure"))
 		require.NoError(t, err)
 
 		// Should be able to remove failed worker
@@ -297,18 +299,18 @@ func TestMaster_RemoveWorker(t *testing.T) {
 
 func TestIsWorkerSafelyRemovable(t *testing.T) {
 	tests := []struct {
-		state    workers.WorkerState
+		state    workerstatemachine.WorkerState
 		expected bool
 		reason   string
 	}{
-		{workers.WorkerStateUnknown, true, "unknown state should be safe"},
-		{workers.WorkerStateRegistered, true, "registered workers have no process"},
-		{workers.WorkerStateStarting, false, "starting workers may have process"},
-		{workers.WorkerStateRunning, false, "running workers have active process"},
-		{workers.WorkerStateStopping, false, "stopping workers still have process"},
-		{workers.WorkerStateStopped, true, "stopped workers have no process"},
-		{workers.WorkerStateFailed, true, "failed workers have no process"},
-		{workers.WorkerStateRestarting, false, "restarting workers may have process"},
+		{workerstatemachine.WorkerStateUnknown, true, "unknown state should be safe"},
+		{workerstatemachine.WorkerStateRegistered, true, "registered workers have no process"},
+		{workerstatemachine.WorkerStateStarting, false, "starting workers may have process"},
+		{workerstatemachine.WorkerStateRunning, false, "running workers have active process"},
+		{workerstatemachine.WorkerStateStopping, false, "stopping workers still have process"},
+		{workerstatemachine.WorkerStateStopped, true, "stopped workers have no process"},
+		{workerstatemachine.WorkerStateFailed, true, "failed workers have no process"},
+		{workerstatemachine.WorkerStateRestarting, false, "restarting workers may have process"},
 	}
 
 	for _, tt := range tests {

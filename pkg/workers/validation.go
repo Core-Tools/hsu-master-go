@@ -4,6 +4,7 @@ import (
 	"github.com/core-tools/hsu-master/pkg/errors"
 	"github.com/core-tools/hsu-master/pkg/monitoring"
 	"github.com/core-tools/hsu-master/pkg/process"
+	"github.com/core-tools/hsu-master/pkg/workers/processcontrol"
 )
 
 func ValidateManagedUnit(config ManagedUnit) error {
@@ -80,7 +81,7 @@ func ValidateIntegratedUnit(config IntegratedUnit) error {
 }
 
 // ValidateProcessControlOptions validates process control options
-func ValidateProcessControlOptions(options ProcessControlOptions) error {
+func ValidateProcessControlOptions(options processcontrol.ProcessControlOptions) error {
 	// Validate graceful timeout
 	if options.GracefulTimeout < 0 {
 		return errors.NewValidationError("graceful timeout cannot be negative", nil)

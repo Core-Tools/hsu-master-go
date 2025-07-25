@@ -9,10 +9,13 @@ import (
 	coreControl "github.com/core-tools/hsu-core/pkg/control"
 	coreDomain "github.com/core-tools/hsu-core/pkg/domain"
 	coreLogging "github.com/core-tools/hsu-core/pkg/logging"
+	"github.com/core-tools/hsu-master-go/pkg/workers/processcontrolimpl"
 	masterControl "github.com/core-tools/hsu-master/pkg/control"
 	"github.com/core-tools/hsu-master/pkg/errors"
 	masterLogging "github.com/core-tools/hsu-master/pkg/logging"
 	"github.com/core-tools/hsu-master/pkg/workers"
+	"github.com/core-tools/hsu-master/pkg/workers/processcontrol"
+	"github.com/core-tools/hsu-master/pkg/workers/workerstatemachine"
 )
 
 type MasterOptions struct {
@@ -38,8 +41,8 @@ const (
 
 // WorkerEntry combines ProcessControl and StateMachine for a worker
 type WorkerEntry struct {
-	ProcessControl workers.ProcessControl
-	StateMachine   *workers.WorkerStateMachine
+	ProcessControl processcontrol.ProcessControl
+	StateMachine   *workerstatemachine.WorkerStateMachine
 }
 
 type Master struct {
@@ -113,7 +116,7 @@ func (m *Master) AddWorker(worker workers.Worker) error {
 	}
 
 	// Create state machine for the worker
-	stateMachine := workers.NewWorkerStateMachine(id, m.logger)
+	stateMachine := workerstatemachine.NewWorkerStateMachine(id, m.logger)
 
 	// Validate that add operation is allowed
 	if err := stateMachine.ValidateOperation("add"); err != nil {
@@ -121,7 +124,7 @@ func (m *Master) AddWorker(worker workers.Worker) error {
 	}
 
 	// Transition to registered state
-	if err := stateMachine.Transition(workers.WorkerStateRegistered, "add", nil); err != nil {
+	if err := stateMachine.Transition(workerstatemachine.WorkerStateRegistered, "add", nil); err != nil {
 		return errors.NewInternalError("failed to transition worker to registered state", err).WithContext("worker_id", id)
 	}
 
@@ -134,7 +137,7 @@ func (m *Master) AddWorker(worker workers.Worker) error {
 	})
 
 	// Create process control
-	processControl := workers.NewProcessControl(options, id, logger)
+	processControl := processcontrolimpl.NewProcessControl(options, id, logger)
 
 	// Store worker and state machine
 	m.workers[id] = &WorkerEntry{
@@ -189,13 +192,13 @@ func (m *Master) RemoveWorker(id string) error {
 }
 
 // isWorkerSafelyRemovable checks if a worker is in a state safe for removal
-func isWorkerSafelyRemovable(state workers.WorkerState) bool {
+func isWorkerSafelyRemovable(state workerstatemachine.WorkerState) bool {
 	switch state {
-	case workers.WorkerStateStopped, workers.WorkerStateFailed:
+	case workerstatemachine.WorkerStateStopped, workerstatemachine.WorkerStateFailed:
 		return true // Safe to remove - process is not running
-	case workers.WorkerStateUnknown, workers.WorkerStateRegistered:
+	case workerstatemachine.WorkerStateUnknown, workerstatemachine.WorkerStateRegistered:
 		return true // Safe to remove - no process started yet
-	case workers.WorkerStateStarting, workers.WorkerStateRunning, workers.WorkerStateStopping, workers.WorkerStateRestarting:
+	case workerstatemachine.WorkerStateStarting, workerstatemachine.WorkerStateRunning, workerstatemachine.WorkerStateStopping, workerstatemachine.WorkerStateRestarting:
 		return false // Unsafe - process may be running
 	default:
 		return false // Unknown state - be conservative
@@ -236,7 +239,7 @@ func (m *Master) StartWorker(ctx context.Context, id string) error {
 	}
 
 	// 3. Transition to starting state
-	if err := workerEntry.StateMachine.Transition(workers.WorkerStateStarting, "start", nil); err != nil {
+	if err := workerEntry.StateMachine.Transition(workerstatemachine.WorkerStateStarting, "start", nil); err != nil {
 		return errors.NewInternalError("failed to transition worker to starting state", err).WithContext("worker_id", id)
 	}
 
@@ -246,7 +249,7 @@ func (m *Master) StartWorker(ctx context.Context, id string) error {
 	// 5. Update state based on result
 	if err != nil {
 		// Transition to failed state
-		transitionErr := workerEntry.StateMachine.Transition(workers.WorkerStateFailed, "start", err)
+		transitionErr := workerEntry.StateMachine.Transition(workerstatemachine.WorkerStateFailed, "start", err)
 		if transitionErr != nil {
 			m.logger.Errorf("Failed to transition worker to failed state, id: %s, error: %v", id, transitionErr)
 		}
@@ -261,7 +264,7 @@ func (m *Master) StartWorker(ctx context.Context, id string) error {
 	}
 
 	// 6. Transition to running state on success
-	if err := workerEntry.StateMachine.Transition(workers.WorkerStateRunning, "start", nil); err != nil {
+	if err := workerEntry.StateMachine.Transition(workerstatemachine.WorkerStateRunning, "start", nil); err != nil {
 		m.logger.Errorf("Failed to transition worker to running state, id: %s, error: %v", id, err)
 		// Note: Process is actually running, but state tracking failed
 	}
@@ -304,7 +307,7 @@ func (m *Master) StopWorker(ctx context.Context, id string) error {
 	}
 
 	// 3. Transition to stopping state
-	if err := workerEntry.StateMachine.Transition(workers.WorkerStateStopping, "stop", nil); err != nil {
+	if err := workerEntry.StateMachine.Transition(workerstatemachine.WorkerStateStopping, "stop", nil); err != nil {
 		return errors.NewInternalError("failed to transition worker to stopping state", err).WithContext("worker_id", id)
 	}
 
@@ -314,7 +317,7 @@ func (m *Master) StopWorker(ctx context.Context, id string) error {
 	// 5. Update state based on result
 	if err != nil {
 		// Transition to failed state
-		transitionErr := workerEntry.StateMachine.Transition(workers.WorkerStateFailed, "stop", err)
+		transitionErr := workerEntry.StateMachine.Transition(workerstatemachine.WorkerStateFailed, "stop", err)
 		if transitionErr != nil {
 			m.logger.Errorf("Failed to transition worker to failed state, id: %s, error: %v", id, transitionErr)
 		}
@@ -329,7 +332,7 @@ func (m *Master) StopWorker(ctx context.Context, id string) error {
 	}
 
 	// 6. Transition to stopped state on success
-	if err := workerEntry.StateMachine.Transition(workers.WorkerStateStopped, "stop", nil); err != nil {
+	if err := workerEntry.StateMachine.Transition(workerstatemachine.WorkerStateStopped, "stop", nil); err != nil {
 		m.logger.Errorf("Failed to transition worker to stopped state, id: %s, error: %v", id, err)
 		// Note: Process is actually stopped, but state tracking failed
 	}
@@ -385,10 +388,10 @@ func (m *Master) RunWithOptions(options RunOptions) {
 }
 
 // GetAllWorkerStates returns state information for all workers
-func (m *Master) GetAllWorkerStates() map[string]workers.WorkerStateInfo {
+func (m *Master) GetAllWorkerStates() map[string]workerstatemachine.WorkerStateInfo {
 	workerEntriesCopy := m.getAllWorkers()
 
-	result := make(map[string]workers.WorkerStateInfo)
+	result := make(map[string]workerstatemachine.WorkerStateInfo)
 	for id, workerEntry := range workerEntriesCopy {
 		result[id] = workerEntry.StateMachine.GetStateInfo()
 	}
@@ -396,32 +399,32 @@ func (m *Master) GetAllWorkerStates() map[string]workers.WorkerStateInfo {
 }
 
 // GetWorkerState returns the current state of a worker
-func (m *Master) GetWorkerState(id string) (workers.WorkerState, error) {
+func (m *Master) GetWorkerState(id string) (workerstatemachine.WorkerState, error) {
 	// Validate worker ID
 	if err := ValidateWorkerID(id); err != nil {
-		return workers.WorkerStateUnknown, errors.NewValidationError("invalid worker ID", err).WithContext("worker_id", id)
+		return workerstatemachine.WorkerStateUnknown, errors.NewValidationError("invalid worker ID", err).WithContext("worker_id", id)
 	}
 
 	workerEntry, _, exists := m.getWorkerAndMasterState(id)
 
 	if !exists {
-		return workers.WorkerStateUnknown, errors.NewNotFoundError("worker not found", nil).WithContext("worker_id", id)
+		return workerstatemachine.WorkerStateUnknown, errors.NewNotFoundError("worker not found", nil).WithContext("worker_id", id)
 	}
 
 	return workerEntry.StateMachine.GetCurrentState(), nil
 }
 
 // GetWorkerStateInfo returns comprehensive state information for a worker
-func (m *Master) GetWorkerStateInfo(id string) (workers.WorkerStateInfo, error) {
+func (m *Master) GetWorkerStateInfo(id string) (workerstatemachine.WorkerStateInfo, error) {
 	// Validate worker ID
 	if err := ValidateWorkerID(id); err != nil {
-		return workers.WorkerStateInfo{}, errors.NewValidationError("invalid worker ID", err).WithContext("worker_id", id)
+		return workerstatemachine.WorkerStateInfo{}, errors.NewValidationError("invalid worker ID", err).WithContext("worker_id", id)
 	}
 
 	workerEntry, _, exists := m.getWorkerAndMasterState(id)
 
 	if !exists {
-		return workers.WorkerStateInfo{}, errors.NewNotFoundError("worker not found", nil).WithContext("worker_id", id)
+		return workerstatemachine.WorkerStateInfo{}, errors.NewNotFoundError("worker not found", nil).WithContext("worker_id", id)
 	}
 
 	return workerEntry.StateMachine.GetStateInfo(), nil

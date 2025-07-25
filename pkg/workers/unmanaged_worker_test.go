@@ -8,6 +8,7 @@ import (
 
 	"github.com/core-tools/hsu-master/pkg/monitoring"
 	"github.com/core-tools/hsu-master/pkg/process"
+	"github.com/core-tools/hsu-master/pkg/workers/processcontrol"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -58,7 +59,7 @@ func createTestUnmanagedUnit() *UnmanagedUnit {
 			PIDFile:       pidFile,
 			CheckInterval: 15 * time.Second,
 		},
-		Control: SystemProcessControlConfig{
+		Control: processcontrol.SystemProcessControlConfig{
 			CanTerminate:    true,
 			CanRestart:      false,
 			ServiceManager:  "systemd",
@@ -91,7 +92,7 @@ func createTestUnmanagedUnitWithPortDiscovery() *UnmanagedUnit {
 			Protocol:      "tcp",
 			CheckInterval: 20 * time.Second,
 		},
-		Control: SystemProcessControlConfig{
+		Control: processcontrol.SystemProcessControlConfig{
 			CanTerminate:    false,
 			CanRestart:      false,
 			ServiceManager:  "",

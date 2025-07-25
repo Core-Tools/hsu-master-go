@@ -12,6 +12,7 @@ import (
 	"github.com/core-tools/hsu-master/pkg/monitoring"
 	"github.com/core-tools/hsu-master/pkg/process"
 	"github.com/core-tools/hsu-master/pkg/processfile"
+	"github.com/core-tools/hsu-master/pkg/workers/processcontrol"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -64,7 +65,7 @@ func createTestManagedUnit() *ManagedUnit {
 			Name:        "test-managed-unit",
 			Description: "Test managed unit",
 		},
-		Control: ManagedProcessControlConfig{
+		Control: processcontrol.ManagedProcessControlConfig{
 			Execution: process.ExecutionConfig{
 				ExecutablePath:   executablePath,
 				Args:             args,
@@ -256,7 +257,7 @@ func TestManagedWorker_ExecuteCmd_PIDFileWriting(t *testing.T) {
 			Name:        "Test Worker",
 			Description: "Test worker for PID file testing",
 		},
-		Control: ManagedProcessControlConfig{
+		Control: processcontrol.ManagedProcessControlConfig{
 			Execution: process.ExecutionConfig{
 				ExecutablePath:   executablePath,
 				Args:             args,

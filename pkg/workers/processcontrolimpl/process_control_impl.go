@@ -1,4 +1,4 @@
-package workers
+package processcontrolimpl
 
 import (
 	"context"
@@ -12,95 +12,11 @@ import (
 	"github.com/core-tools/hsu-master/pkg/logging"
 	"github.com/core-tools/hsu-master/pkg/monitoring"
 	"github.com/core-tools/hsu-master/pkg/process"
-	"github.com/core-tools/hsu-master/pkg/processfile"
+	"github.com/core-tools/hsu-master/pkg/workers/processcontrol"
 )
 
-type SystemProcessControlConfig struct {
-	// Basic control
-	CanTerminate bool `yaml:"can_terminate,omitempty"` // Can send SIGTERM/SIGKILL
-	CanRestart   bool `yaml:"can_restart,omitempty"`   // Can restart (via service manager)
-
-	// Service manager integration
-	ServiceManager string `yaml:"service_manager,omitempty"` // "systemd", "windows", "launchd"
-	ServiceName    string `yaml:"service_name,omitempty"`    // Service name for restart
-
-	// Process signals
-	AllowedSignals []os.Signal `yaml:"allowed_signals,omitempty"` // Allowed signals to send
-
-	// Graceful shutdown
-	GracefulTimeout time.Duration `yaml:"graceful_timeout,omitempty"` // Time to wait for graceful shutdown
-}
-
-type ManagedProcessControlConfig struct {
-	// Process execution
-	Execution process.ExecutionConfig `yaml:"execution"`
-
-	// PID file configuration (optional)
-	ProcessFile *processfile.ProcessFileConfig `yaml:"process_file,omitempty"`
-
-	// Process restart
-	Restart monitoring.RestartConfig `yaml:"restart"`
-
-	// Resource management
-	Limits process.ResourceLimits `yaml:"limits,omitempty"`
-
-	/*
-		// I/O handling
-		LogConfig      LogConfig
-		StdoutRedirect string
-		StderrRedirect string
-
-		// Scheduling
-		Schedule ScheduleConfig
-	*/
-
-	// Graceful shutdown
-	GracefulTimeout time.Duration `yaml:"graceful_timeout,omitempty"` // Time to wait for graceful shutdown
-}
-
-type ProcessControl interface {
-	Process() *os.Process // Simplified to only return process
-	HealthMonitor() monitoring.HealthMonitor
-	Stdout() io.ReadCloser
-	Start(ctx context.Context) error
-	Stop(ctx context.Context) error
-	Restart(ctx context.Context) error
-}
-
-// AttachCmd represents a command that attaches to an existing process
-type AttachCmd func(ctx context.Context) (*os.Process, io.ReadCloser, *monitoring.HealthCheckConfig, error)
-
-// ExecuteCmd represents a command that executes a new process
-type ExecuteCmd func(ctx context.Context) (*os.Process, io.ReadCloser, *monitoring.HealthCheckConfig, error)
-
-type ProcessControlOptions struct {
-	// Basic control
-	CanAttach    bool // Can attach to existing process
-	CanTerminate bool // Can send SIGTERM/SIGKILL
-	CanRestart   bool // Can restart
-
-	// Process signals
-	AllowedSignals []os.Signal // Allowed signals to send
-
-	// Graceful shutdown
-	GracefulTimeout time.Duration // Time to wait for graceful shutdown
-
-	// Process start
-	ExecuteCmd ExecuteCmd // Execute command, nil if not executable
-	AttachCmd  AttachCmd  // Attach command, nil if not attachable
-
-	// Resource management
-	Limits *process.ResourceLimits // nil if not limitable
-
-	// Process restart
-	Restart *monitoring.RestartConfig // nil if not restartable
-
-	// Health check override
-	HealthCheck *monitoring.HealthCheckConfig // nil if not health checkable or if ExecuteCmd/AttachCmd are provided
-}
-
 type processControl struct {
-	config        ProcessControlOptions
+	config        processcontrol.ProcessControlOptions
 	process       *os.Process
 	stdout        io.ReadCloser
 	healthMonitor monitoring.HealthMonitor
@@ -114,7 +30,7 @@ type processControl struct {
 	mutex              sync.Mutex // Protect restart state
 }
 
-func NewProcessControl(config ProcessControlOptions, workerID string, logger logging.Logger) ProcessControl {
+func NewProcessControl(config processcontrol.ProcessControlOptions, workerID string, logger logging.Logger) processcontrol.ProcessControl {
 	return &processControl{
 		config:   config,
 		logger:   logger,

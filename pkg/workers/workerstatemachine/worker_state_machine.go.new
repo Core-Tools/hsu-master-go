@@ -1,4 +1,4 @@
-package workers
+package workerstatemachine
 
 import (
 	"fmt"
@@ -110,7 +110,7 @@ func (wsm *WorkerStateMachine) GetCurrentState() WorkerState {
 	return wsm.currentState
 }
 
-// CanTransition checks if a state transition is valid
+// CanTransition checks if a transition from current state to target state is valid (thread-safe)
 func (wsm *WorkerStateMachine) CanTransition(to WorkerState) bool {
 	wsm.mutex.RLock()
 	defer wsm.mutex.RUnlock()
@@ -128,24 +128,24 @@ func (wsm *WorkerStateMachine) CanTransition(to WorkerState) bool {
 	return false
 }
 
-// Transition attempts to transition to a new state with validation
+// Transition attempts to transition to a new state (thread-safe)
 func (wsm *WorkerStateMachine) Transition(to WorkerState, operation string, err error) error {
 	wsm.mutex.Lock()
 	defer wsm.mutex.Unlock()
 
-	from := wsm.currentState
-
-	// Validate transition
 	if !wsm.canTransitionUnsafe(to) {
 		return errors.NewValidationError(
-			fmt.Sprintf("invalid state transition from %s to %s for operation %s", from, to, operation),
+			fmt.Sprintf("invalid state transition from %s to %s", wsm.currentState, to),
 			nil,
-		).WithContext("worker_id", wsm.workerID).WithContext("current_state", string(from)).WithContext("target_state", string(to))
+		).WithContext("worker_id", wsm.workerID).
+			WithContext("current_state", string(wsm.currentState)).
+			WithContext("target_state", string(to)).
+			WithContext("operation", operation)
 	}
 
 	// Record transition
 	transition := WorkerStateTransition{
-		From:      from,
+		From:      wsm.currentState,
 		To:        to,
 		Operation: operation,
 		Timestamp: time.Now(),
@@ -155,19 +155,13 @@ func (wsm *WorkerStateMachine) Transition(to WorkerState, operation string, err 
 	wsm.transitions = append(wsm.transitions, transition)
 	wsm.currentState = to
 
-	// Log state transition
-	if err != nil {
-		wsm.logger.Warnf("Worker state transition failed, worker: %s, %s->%s, operation: %s, error: %v",
-			wsm.workerID, from, to, operation, err)
-	} else {
-		wsm.logger.Infof("Worker state transition, worker: %s, %s->%s, operation: %s",
-			wsm.workerID, from, to, operation)
-	}
+	wsm.logger.Debugf("Worker state transition: %s -> %s (operation: %s), worker: %s",
+		transition.From, transition.To, operation, wsm.workerID)
 
 	return nil
 }
 
-// canTransitionUnsafe checks transition validity without locking (internal use)
+// canTransitionUnsafe checks if a transition is valid (assumes lock is held)
 func (wsm *WorkerStateMachine) canTransitionUnsafe(to WorkerState) bool {
 	validStates, exists := wsm.validTransitions[wsm.currentState]
 	if !exists {
@@ -182,7 +176,66 @@ func (wsm *WorkerStateMachine) canTransitionUnsafe(to WorkerState) bool {
 	return false
 }
 
-// GetTransitionHistory returns the complete transition history (thread-safe)
+// ValidateOperation checks if an operation is allowed in the current state
+func (wsm *WorkerStateMachine) ValidateOperation(operation string) error {
+	wsm.mutex.RLock()
+	defer wsm.mutex.RUnlock()
+
+	switch operation {
+	case "start":
+		if wsm.currentState == WorkerStateRegistered || wsm.currentState == WorkerStateStopped || wsm.currentState == WorkerStateFailed {
+			return nil
+		}
+		return errors.NewValidationError(
+			fmt.Sprintf("cannot start worker in state %s", wsm.currentState),
+			nil,
+		).WithContext("worker_id", wsm.workerID).
+			WithContext("current_state", string(wsm.currentState)).
+			WithContext("operation", operation)
+
+	case "stop":
+		if wsm.currentState == WorkerStateRunning {
+			return nil
+		}
+		return errors.NewValidationError(
+			fmt.Sprintf("cannot stop worker in state %s", wsm.currentState),
+			nil,
+		).WithContext("worker_id", wsm.workerID).
+			WithContext("current_state", string(wsm.currentState)).
+			WithContext("operation", operation)
+
+	case "restart":
+		if wsm.currentState == WorkerStateRunning {
+			return nil
+		}
+		return errors.NewValidationError(
+			fmt.Sprintf("cannot restart worker in state %s", wsm.currentState),
+			nil,
+		).WithContext("worker_id", wsm.workerID).
+			WithContext("current_state", string(wsm.currentState)).
+			WithContext("operation", operation)
+
+	case "remove":
+		if wsm.currentState == WorkerStateStopped || wsm.currentState == WorkerStateFailed {
+			return nil
+		}
+		return errors.NewValidationError(
+			fmt.Sprintf("cannot remove worker in state %s (must be stopped or failed)", wsm.currentState),
+			nil,
+		).WithContext("worker_id", wsm.workerID).
+			WithContext("current_state", string(wsm.currentState)).
+			WithContext("operation", operation)
+
+	default:
+		return errors.NewValidationError(
+			fmt.Sprintf("unknown operation: %s", operation),
+			nil,
+		).WithContext("worker_id", wsm.workerID).
+			WithContext("operation", operation)
+	}
+}
+
+// GetTransitionHistory returns the history of state transitions (thread-safe)
 func (wsm *WorkerStateMachine) GetTransitionHistory() []WorkerStateTransition {
 	wsm.mutex.RLock()
 	defer wsm.mutex.RUnlock()
@@ -193,76 +246,20 @@ func (wsm *WorkerStateMachine) GetTransitionHistory() []WorkerStateTransition {
 	return history
 }
 
-// GetStateInfo returns comprehensive state information
-func (wsm *WorkerStateMachine) GetStateInfo() WorkerStateInfo {
+// GetStateInfo returns detailed state information (thread-safe)
+func (wsm *WorkerStateMachine) GetStateInfo() map[string]interface{} {
 	wsm.mutex.RLock()
 	defer wsm.mutex.RUnlock()
 
-	var lastTransition *WorkerStateTransition
-	if len(wsm.transitions) > 0 {
-		lastTransition = &wsm.transitions[len(wsm.transitions)-1]
-	}
-
-	return WorkerStateInfo{
-		WorkerID:        wsm.workerID,
-		CurrentState:    wsm.currentState,
-		LastTransition:  lastTransition,
-		TransitionCount: len(wsm.transitions),
-		ValidNextStates: wsm.getValidNextStatesUnsafe(),
+	return map[string]interface{}{
+		"worker_id":         wsm.workerID,
+		"current_state":     wsm.currentState,
+		"transition_count":  len(wsm.transitions),
+		"valid_transitions": wsm.validTransitions[wsm.currentState],
 	}
 }
 
-// getValidNextStatesUnsafe returns valid next states without locking (internal use)
-func (wsm *WorkerStateMachine) getValidNextStatesUnsafe() []WorkerState {
-	validStates, exists := wsm.validTransitions[wsm.currentState]
-	if !exists {
-		return []WorkerState{}
-	}
-
-	// Return a copy
-	nextStates := make([]WorkerState, len(validStates))
-	copy(nextStates, validStates)
-	return nextStates
-}
-
-// WorkerStateInfo provides comprehensive information about worker state
-type WorkerStateInfo struct {
-	WorkerID        string
-	CurrentState    WorkerState
-	LastTransition  *WorkerStateTransition
-	TransitionCount int
-	ValidNextStates []WorkerState
-}
-
-// IsOperationAllowed checks if a specific operation is allowed in current state
+// IsOperationAllowed checks if a specific operation is allowed in the current state
 func (wsm *WorkerStateMachine) IsOperationAllowed(operation string) bool {
-	currentState := wsm.GetCurrentState()
-
-	switch operation {
-	case "start":
-		return wsm.CanTransition(WorkerStateStarting)
-	case "stop":
-		return currentState == WorkerStateRunning && wsm.CanTransition(WorkerStateStopping)
-	case "restart":
-		return currentState == WorkerStateRunning && wsm.CanTransition(WorkerStateRestarting)
-	case "add":
-		return currentState == WorkerStateUnknown && wsm.CanTransition(WorkerStateRegistered)
-	case "remove":
-		return currentState == WorkerStateRegistered || currentState == WorkerStateStopped
-	default:
-		return false
-	}
-}
-
-// ValidateOperation checks if an operation can be performed and returns descriptive error
-func (wsm *WorkerStateMachine) ValidateOperation(operation string) error {
-	if wsm.IsOperationAllowed(operation) {
-		return nil
-	}
-
-	currentState := wsm.GetCurrentState()
-	return errors.NewValidationError(
-		fmt.Sprintf("operation '%s' not allowed in current state '%s'", operation, currentState),
-		nil,
-	).WithContext("worker_id", wsm.workerID).WithContext("current_state", string(currentState)).WithContext("operation", operation)
+	return wsm.ValidateOperation(operation) == nil
 }

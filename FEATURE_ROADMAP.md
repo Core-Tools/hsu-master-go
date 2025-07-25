@@ -130,12 +130,22 @@
 
 ## 💡 **Future Feature Ideas**
 
+### **Architectural Improvements (From Assessment v2.0)**
+- **Package Boundary Refinements**: 
+  - Consider `pkg/processcontrol` split from `workers` package
+  - Hybrid configuration validation approach
+  - Optional monitoring package split (`pkg/health` + `pkg/restart`)
+- **Circuit Breaker Enhancement**: Evaluate placement options
+- **Interface Standardization**: Further interface-based design improvements
+- **Plugin Architecture**: Worker plugin system for extensibility
+
 ### **Configuration System Enhancements**
 - **YAML Inheritance & Templates**: Reusable configuration patterns
 - **Environment Variable Substitution**: `${VAR}` syntax support
 - **Configuration Validation**: Schema validation with helpful errors
 - **Configuration Watching**: Hot-reload capabilities
 - **Configuration Templates**: Predefined patterns for common use cases
+- **Hybrid Configuration Approach**: Centralized validation with distributed structs
 
 ### **API & Management Interface**
 - **REST API**: Full CRUD operations for workers

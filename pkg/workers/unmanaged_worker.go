@@ -8,13 +8,14 @@ import (
 	"github.com/core-tools/hsu-master/pkg/logging"
 	"github.com/core-tools/hsu-master/pkg/monitoring"
 	"github.com/core-tools/hsu-master/pkg/process"
+	"github.com/core-tools/hsu-master/pkg/workers/processcontrol"
 )
 
 type unmanagedWorker struct {
 	id                   string
 	metadata             UnitMetadata
 	discoveryConfig      process.DiscoveryConfig
-	processControlConfig SystemProcessControlConfig
+	processControlConfig processcontrol.SystemProcessControlConfig
 	healthCheckConfig    monitoring.HealthCheckConfig
 	logger               logging.Logger
 }
@@ -38,11 +39,11 @@ func (w *unmanagedWorker) Metadata() UnitMetadata {
 	return w.metadata
 }
 
-func (w *unmanagedWorker) ProcessControlOptions() ProcessControlOptions {
+func (w *unmanagedWorker) ProcessControlOptions() processcontrol.ProcessControlOptions {
 	w.logger.Debugf("Preparing process control options for unmanaged worker, id: %s, discovery: %s, can_terminate: %t, can_restart: %t",
 		w.id, w.discoveryConfig.Method, w.processControlConfig.CanTerminate, w.processControlConfig.CanRestart)
 
-	return ProcessControlOptions{
+	return processcontrol.ProcessControlOptions{
 		CanAttach:       true,                                   // Must attach to existing processes
 		CanTerminate:    w.processControlConfig.CanTerminate,    // Based on system control config
 		CanRestart:      w.processControlConfig.CanRestart,      // Based on system control config

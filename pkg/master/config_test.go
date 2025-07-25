@@ -10,6 +10,7 @@ import (
 	"github.com/core-tools/hsu-master/pkg/monitoring"
 	"github.com/core-tools/hsu-master/pkg/process"
 	"github.com/core-tools/hsu-master/pkg/workers"
+	"github.com/core-tools/hsu-master/pkg/workers/processcontrol"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -249,7 +250,7 @@ func TestValidateConfig(t *testing.T) {
 								Metadata: workers.UnitMetadata{
 									Name: "Test Worker",
 								},
-								Control: workers.ManagedProcessControlConfig{
+								Control: processcontrol.ManagedProcessControlConfig{
 									Execution: process.ExecutionConfig{
 										ExecutablePath: executablePath,
 									},
@@ -285,7 +286,7 @@ func TestValidateConfig(t *testing.T) {
 						Unit: WorkerUnitConfig{
 							Managed: &workers.ManagedUnit{
 								Metadata: workers.UnitMetadata{Name: "Test"},
-								Control: workers.ManagedProcessControlConfig{
+								Control: processcontrol.ManagedProcessControlConfig{
 									Execution: process.ExecutionConfig{ExecutablePath: executablePath},
 									Restart: monitoring.RestartConfig{
 										Policy:      monitoring.RestartOnFailure,
@@ -330,7 +331,7 @@ func TestCreateWorkersFromConfig(t *testing.T) {
 				Unit: WorkerUnitConfig{
 					Managed: &workers.ManagedUnit{
 						Metadata: workers.UnitMetadata{Name: "Managed Test"},
-						Control: workers.ManagedProcessControlConfig{
+						Control: processcontrol.ManagedProcessControlConfig{
 							Execution: process.ExecutionConfig{ExecutablePath: executablePath},
 							Restart: monitoring.RestartConfig{
 								Policy:      monitoring.RestartOnFailure,
@@ -349,7 +350,7 @@ func TestCreateWorkersFromConfig(t *testing.T) {
 				Unit: WorkerUnitConfig{
 					Managed: &workers.ManagedUnit{
 						Metadata: workers.UnitMetadata{Name: "Disabled Test"},
-						Control: workers.ManagedProcessControlConfig{
+						Control: processcontrol.ManagedProcessControlConfig{
 							Execution: process.ExecutionConfig{ExecutablePath: executablePath},
 							Restart: monitoring.RestartConfig{
 								Policy:      monitoring.RestartNever,
@@ -388,7 +389,7 @@ func TestConfigDefaults(t *testing.T) {
 				Unit: WorkerUnitConfig{
 					Managed: &workers.ManagedUnit{
 						Metadata: workers.UnitMetadata{Name: "Test"},
-						Control: workers.ManagedProcessControlConfig{
+						Control: processcontrol.ManagedProcessControlConfig{
 							Execution: process.ExecutionConfig{
 								ExecutablePath: executablePath,
 								// WaitDelay not set - should get default
@@ -437,7 +438,7 @@ func TestGetConfigSummary(t *testing.T) {
 				Unit: WorkerUnitConfig{
 					Managed: &workers.ManagedUnit{
 						Metadata: workers.UnitMetadata{Name: "Web Service"},
-						Control: workers.ManagedProcessControlConfig{
+						Control: processcontrol.ManagedProcessControlConfig{
 							Execution: process.ExecutionConfig{ExecutablePath: executablePath},
 							Restart:   monitoring.RestartConfig{Policy: monitoring.RestartAlways},
 						},

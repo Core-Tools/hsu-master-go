@@ -11,6 +11,7 @@ import (
 	"github.com/core-tools/hsu-master/pkg/errors"
 	"github.com/core-tools/hsu-master/pkg/monitoring"
 	"github.com/core-tools/hsu-master/pkg/process"
+	"github.com/core-tools/hsu-master/pkg/workers/processcontrol"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -63,7 +64,7 @@ func createTestIntegratedUnit() *IntegratedUnit {
 			Name:        "test-integrated-service",
 			Description: "Test integrated service",
 		},
-		Control: ManagedProcessControlConfig{
+		Control: processcontrol.ManagedProcessControlConfig{
 			Execution: process.ExecutionConfig{
 				ExecutablePath:   executablePath,
 				Args:             args,

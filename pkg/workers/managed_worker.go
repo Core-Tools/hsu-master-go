@@ -11,12 +11,13 @@ import (
 	"github.com/core-tools/hsu-master/pkg/monitoring"
 	"github.com/core-tools/hsu-master/pkg/process"
 	"github.com/core-tools/hsu-master/pkg/processfile"
+	"github.com/core-tools/hsu-master/pkg/workers/processcontrol"
 )
 
 type managedWorker struct {
 	id                   string
 	metadata             UnitMetadata
-	processControlConfig ManagedProcessControlConfig
+	processControlConfig processcontrol.ManagedProcessControlConfig
 	healthCheckConfig    monitoring.HealthCheckConfig
 	logger               logging.Logger
 	pidManager           *processfile.ProcessFileManager
@@ -49,8 +50,8 @@ func (w *managedWorker) Metadata() UnitMetadata {
 	return w.metadata
 }
 
-func (w *managedWorker) ProcessControlOptions() ProcessControlOptions {
-	return ProcessControlOptions{
+func (w *managedWorker) ProcessControlOptions() processcontrol.ProcessControlOptions {
+	return processcontrol.ProcessControlOptions{
 		CanAttach:       true, // Can attach to existing processes as fallback
 		CanTerminate:    true, // Can terminate processes
 		CanRestart:      true, // Can restart processes

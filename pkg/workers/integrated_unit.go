@@ -1,6 +1,9 @@
 package workers
 
-import "github.com/core-tools/hsu-master/pkg/monitoring"
+import (
+	"github.com/core-tools/hsu-master/pkg/monitoring"
+	"github.com/core-tools/hsu-master/pkg/workers/processcontrol"
+)
 
 type IntegratedUnit struct {
 	// Metadata
@@ -10,7 +13,7 @@ type IntegratedUnit struct {
 	// Always use process PID file discovery
 
 	// Process control
-	Control ManagedProcessControlConfig `yaml:"control"`
+	Control processcontrol.ManagedProcessControlConfig `yaml:"control"`
 
 	// Health monitoring
 	HealthCheckRunOptions monitoring.HealthCheckRunOptions `yaml:"health_check_run_options,omitempty"`
