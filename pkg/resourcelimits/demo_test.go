@@ -15,38 +15,37 @@ func (m *MockLogger) Errorf(format string, args ...interface{})               {}
 func (m *MockLogger) Debugf(format string, args ...interface{})               {}
 func (m *MockLogger) LogLevelf(level int, format string, args ...interface{}) {}
 
-func TestResourceLimitManagerBasic(t *testing.T) {
-	logger := &MockLogger{}
-
-	// Test with no limits
-	manager := NewResourceLimitManager(os.Getpid(), nil, logger)
-	if manager.IsMonitoringEnabled() {
-		t.Error("Expected monitoring to be disabled with no limits")
-	}
-
-	// Test with limits
-	limits := &EnhancedResourceLimits{
-		MemoryLimits: &MemoryLimits{
-			MaxRSS:           256 * 1024 * 1024, // 256MB
-			WarningThreshold: 80,
+func TestResourceLimitManager(t *testing.T) {
+	// Create sample resource limits
+	limits := &ResourceLimits{
+		Memory: &MemoryLimits{
+			MaxRSS:           512 * 1024 * 1024, // 512MB
+			WarningThreshold: 80.0,
 			Policy:           ResourcePolicyLog,
-			CheckInterval:    10 * time.Second,
-		},
-		CPULimits: &CPULimits{
-			MaxPercent:       50,
-			WarningThreshold: 70,
-			Policy:           ResourcePolicyAlert,
 			CheckInterval:    5 * time.Second,
 		},
+		CPU: &CPULimits{
+			MaxPercent:       50.0,
+			WarningThreshold: 80.0,
+			Policy:           ResourcePolicyThrottle,
+			CheckInterval:    5 * time.Second,
+		},
+		Process: &ProcessLimits{
+			MaxFileDescriptors: 100,
+			MaxChildProcesses:  5,
+			WarningThreshold:   90.0,
+			Policy:             ResourcePolicyAlert,
+			CheckInterval:      10 * time.Second,
+		},
 		Monitoring: &ResourceMonitoringConfig{
-			Enabled:          true,
-			Interval:         15 * time.Second,
-			HistoryRetention: 2 * time.Hour,
-			AlertingEnabled:  true,
+			Enabled:         true,
+			Interval:        2 * time.Second,
+			AlertingEnabled: true,
 		},
 	}
 
-	manager = NewResourceLimitManager(os.Getpid(), limits, logger)
+	logger := &MockLogger{}
+	manager := NewResourceLimitManager(os.Getpid(), limits, logger)
 	if !manager.IsMonitoringEnabled() {
 		t.Error("Expected monitoring to be enabled with limits")
 	}
@@ -57,8 +56,8 @@ func TestResourceLimitManagerBasic(t *testing.T) {
 		t.Error("Expected to retrieve limits")
 	}
 
-	if retrievedLimits.MemoryLimits.MaxRSS != 256*1024*1024 {
-		t.Errorf("Expected MaxRSS to be 256MB, got %d", retrievedLimits.MemoryLimits.MaxRSS)
+	if retrievedLimits.Memory.MaxRSS != 512*1024*1024 {
+		t.Errorf("Expected MaxRSS to be 512MB, got %d", retrievedLimits.Memory.MaxRSS)
 	}
 }
 

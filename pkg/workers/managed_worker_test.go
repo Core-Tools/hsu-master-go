@@ -12,6 +12,7 @@ import (
 	"github.com/core-tools/hsu-master/pkg/monitoring"
 	"github.com/core-tools/hsu-master/pkg/process"
 	"github.com/core-tools/hsu-master/pkg/processfile"
+	"github.com/core-tools/hsu-master/pkg/resourcelimits"
 	"github.com/core-tools/hsu-master/pkg/workers/processcontrol"
 
 	"github.com/stretchr/testify/assert"
@@ -78,11 +79,14 @@ func createTestManagedUnit() *ManagedUnit {
 				RetryDelay:  10 * time.Second,
 				BackoffRate: 2.0,
 			},
-			Limits: process.ResourceLimits{
-				CPU:          1.0,
-				Memory:       1024 * 1024 * 1024, // 1GB
-				MaxProcesses: 10,
-				MaxOpenFiles: 100,
+			Limits: resourcelimits.ResourceLimits{
+				Memory: &resourcelimits.MemoryLimits{
+					MaxRSS: 1024 * 1024 * 1024, // 1GB
+				},
+				Process: &resourcelimits.ProcessLimits{
+					MaxProcesses:       10,
+					MaxFileDescriptors: 100,
+				},
 			},
 			GracefulTimeout: 30 * time.Second,
 		},
@@ -157,10 +161,11 @@ func TestManagedWorker_ProcessControlOptions(t *testing.T) {
 
 	// Test resource limits
 	require.NotNil(t, options.Limits)
-	assert.Equal(t, 1.0, options.Limits.CPU)
-	assert.Equal(t, int64(1024*1024*1024), options.Limits.Memory)
-	assert.Equal(t, 10, options.Limits.MaxProcesses)
-	assert.Equal(t, 100, options.Limits.MaxOpenFiles)
+	require.NotNil(t, options.Limits.Memory)
+	require.NotNil(t, options.Limits.Process)
+	assert.Equal(t, int64(1024*1024*1024), options.Limits.Memory.MaxRSS)
+	assert.Equal(t, 10, options.Limits.Process.MaxProcesses)
+	assert.Equal(t, 100, options.Limits.Process.MaxFileDescriptors)
 
 	// Test graceful timeout
 	assert.Equal(t, 30*time.Second, options.GracefulTimeout)
@@ -273,11 +278,14 @@ func TestManagedWorker_ExecuteCmd_PIDFileWriting(t *testing.T) {
 				RetryDelay:  5 * time.Second,
 				BackoffRate: 2.0,
 			},
-			Limits: process.ResourceLimits{
-				CPU:          1.0,
-				Memory:       512 * 1024 * 1024, // 512MB
-				MaxProcesses: 10,
-				MaxOpenFiles: 100,
+			Limits: resourcelimits.ResourceLimits{
+				Memory: &resourcelimits.MemoryLimits{
+					MaxRSS: 2048 * 1024 * 1024, // 2GB
+				},
+				Process: &resourcelimits.ProcessLimits{
+					MaxProcesses:       20,
+					MaxFileDescriptors: 200,
+				},
 			},
 		},
 		HealthCheck: monitoring.HealthCheckConfig{

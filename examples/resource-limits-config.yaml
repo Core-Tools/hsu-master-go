@@ -1,134 +1,96 @@
+# HSU Master Configuration with Clean Resource Limits
+# All duplicated fields have been consolidated into their respective nested structs
+
 master:
   port: 50055
-
+  
 workers:
-  # Worker with memory limits and monitoring
   - id: "memory-limited-worker"
     type: "managed"
     unit:
-      managed:
-        metadata:
-          name: "Echo server with memory limits"
-        control:
-          execution:
-            executable_path: "../hsu-example1-go/cmd/srv/echogrpcsrv/echogrpcsrv.exe"
-            args: ["--port", "50051"]
-          restart:
-            policy: "on-failure"
-            max_retries: 3
-            retry_delay: "5s"
-            backoff_rate: 1.5
-          # Enhanced resource limits with policies
-          limits:
-            # Memory limits with graceful shutdown policy
-            memory_limits:
-              max_rss: "256MB"          # Maximum RSS memory
-              max_virtual: "512MB"      # Maximum virtual memory
-              warning_threshold: 80     # Warn at 80% of limit
-              policy: "graceful_shutdown"
-              check_interval: "10s"
-            
-            # CPU limits with throttling policy
-            cpu_limits:
-              max_percent: 50           # Maximum 50% CPU
-              max_time: "30m"           # Maximum 30 minutes CPU time
-              warning_threshold: 70     # Warn at 70% of limit
-              policy: "alert"           # Just alert, don't terminate
-              check_interval: "5s"
-            
-            # Process limits
-            process_limits:
-              max_file_descriptors: 1024
-              max_child_processes: 10
-              warning_threshold: 80
-              policy: "log"
-            
-            # Resource monitoring configuration
-            monitoring:
-              enabled: true
-              interval: "15s"           # Check every 15 seconds
-              history_retention: "2h"   # Keep 2 hours of history
-              alerting_enabled: true
+      execution:
+        executable_path: "./examples/memory-test-app"
+        args: ["--consume-memory", "1GB"]
+        working_directory: "./examples"
+      
+      # CLEAN: All resource limits consolidated - no more duplication!
+      limits:
+        # Process priority (standalone)
+        priority: 10
+        cpu_shares: 1024  # Linux cgroups weight
         
-        health_check:
-          type: "process"
-          run_options:
-            enabled: true
-            interval: "10s"
-            timeout: "5s"
-            initial_delay: "2s"
-            retries: 2
+        # Memory limits (consolidated - no more Memory + MemoryLimits confusion)
+        memory:
+          max_rss: 512MB          # Replaces old "memory" field
+          max_virtual: 1GB        # Virtual memory limit  
+          max_swap: 2GB           # Replaces old "memory_swap" field
+          warning_threshold: 80.0
+          policy: "restart"
+          check_interval: 5s
+          
+        # CPU limits (consolidated - no more CPU + CPULimits confusion)
+        cpu:
+          max_cores: 2.0          # Replaces old "cpu" field
+          max_percent: 75.0       # CPU percentage limit
+          max_time: 1h            # Total CPU time limit
+          warning_threshold: 70.0
+          policy: "throttle"
+          check_interval: 10s
+          
+        # I/O limits (consolidated - no more IOWeight + IOLimits confusion)
+        io:
+          weight: 100             # Replaces old "io_weight" field
+          max_read_bps: 50MB      # Replaces old "io_read_bps" field
+          max_write_bps: 30MB     # Replaces old "io_write_bps" field
+          max_read_ops: 1000      # Advanced limit
+          max_write_ops: 500      # Advanced limit
+          warning_threshold: 85.0
+          policy: "log"
+          check_interval: 30s
+          
+        # Process limits (consolidated - no more MaxProcesses + ProcessLimits confusion)
+        process:
+          max_processes: 10         # Replaces old "max_processes" field
+          max_file_descriptors: 100 # Replaces old "max_open_files" field
+          max_child_processes: 5    # Additional limit
+          warning_threshold: 90.0
+          policy: "alert"
+          check_interval: 15s
+          
+        # Global monitoring settings
+        monitoring:
+          enabled: true
+          interval: 5s
+          history_retention: 1h
+          alerting_enabled: true
 
-  # Worker with CPU limits and immediate termination policy
   - id: "cpu-limited-worker"
     type: "managed"
     unit:
-      managed:
-        metadata:
-          name: "CPU limited worker with strict enforcement"
-        control:
-          execution:
-            executable_path: "../hsu-example1-go/cmd/srv/echogrpcsrv/echogrpcsrv.exe"
-            args: ["--port", "50052"]
-          restart:
-            policy: "on-failure"
-            max_retries: 2
-            retry_delay: "10s"
-            backoff_rate: 2.0
-          # Strict CPU limits with immediate termination
-          limits:
-            cpu_limits:
-              max_percent: 25           # Maximum 25% CPU usage
-              policy: "immediate_kill"  # Kill immediately when exceeded
-              check_interval: "2s"      # Check every 2 seconds
-            
-            memory_limits:
-              max_rss: "128MB"          # Lower memory limit
-              policy: "restart"         # Restart when exceeded
-              check_interval: "5s"
-            
-            monitoring:
-              enabled: true
-              interval: "5s"            # More frequent monitoring
-              history_retention: "1h"
-              alerting_enabled: true
-        
-        health_check:
-          type: "process"
-          run_options:
-            enabled: true
-            interval: "10s"
-            timeout: "5s"
-            initial_delay: "2s"
-            retries: 2
+      execution:
+        executable_path: "./examples/cpu-test-app"
+        args: ["--cpu-intensive"]
+      
+      # Example: CPU-focused limits
+      limits:
+        cpu:
+          max_percent: 50.0       # Max 50% CPU
+          warning_threshold: 80.0
+          policy: "graceful_shutdown"
+          check_interval: 5s
+        monitoring:
+          enabled: true
+          interval: 2s
 
-  # Worker with no limits (for comparison)
-  - id: "unlimited-worker"
-    type: "managed"
+  - id: "basic-worker"
+    type: "managed"  
     unit:
-      managed:
-        metadata:
-          name: "Worker without resource limits"
-        control:
-          execution:
-            executable_path: "../hsu-example1-go/cmd/srv/echogrpcsrv/echogrpcsrv.exe"
-            args: ["--port", "50053"]
-          restart:
-            policy: "on-failure"
-            max_retries: 3
-            retry_delay: "5s"
-            backoff_rate: 1.5
-          # No resource limits - uses existing ResourceLimits for backward compatibility
-          limits:
-            memory: 536870912         # 512MB in bytes (legacy format)
-            cpu: 1.0                  # 1 CPU core (legacy format)
-            max_open_files: 1024      # Legacy format
-        
-        health_check:
-          type: "process"
-          run_options:
-            enabled: true
-            interval: "10s"
-            timeout: "5s"
-            initial_delay: "2s"
-            retries: 2 
+      execution:
+        executable_path: "./examples/basic-app"
+      
+      # Example: Simple limits (just priority)
+      limits:
+        priority: 5
+        memory:
+          max_rss: 256MB
+          policy: "log" 

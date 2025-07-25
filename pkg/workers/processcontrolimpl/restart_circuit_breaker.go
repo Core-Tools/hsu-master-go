@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/core-tools/hsu-master-go/pkg/errors"
+	"github.com/core-tools/hsu-master/pkg/errors"
 	"github.com/core-tools/hsu-master/pkg/logging"
 	"github.com/core-tools/hsu-master/pkg/monitoring"
 )

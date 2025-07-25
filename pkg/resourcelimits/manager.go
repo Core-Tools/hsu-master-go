@@ -12,7 +12,7 @@ import (
 // ResourceLimitManager coordinates resource monitoring and enforcement
 type ResourceLimitManager struct {
 	pid      int
-	limits   *EnhancedResourceLimits
+	limits   *ResourceLimits
 	monitor  ResourceMonitor
 	enforcer ResourceEnforcer
 	logger   logging.Logger
@@ -32,7 +32,7 @@ type ResourceLimitManager struct {
 }
 
 // NewResourceLimitManager creates a new resource limit manager
-func NewResourceLimitManager(pid int, limits *EnhancedResourceLimits, logger logging.Logger) *ResourceLimitManager {
+func NewResourceLimitManager(pid int, limits *ResourceLimits, logger logging.Logger) *ResourceLimitManager {
 	if limits == nil {
 		// Return manager with no limits
 		return &ResourceLimitManager{
@@ -163,7 +163,7 @@ func (rlm *ResourceLimitManager) GetViolations() []*ResourceViolation {
 }
 
 // GetLimits returns the current resource limits
-func (rlm *ResourceLimitManager) GetLimits() *EnhancedResourceLimits {
+func (rlm *ResourceLimitManager) GetLimits() *ResourceLimits {
 	return rlm.limits
 }
 

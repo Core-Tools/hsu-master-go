@@ -225,7 +225,7 @@ func (rm *resourceMonitor) GetUsageHistory(since time.Time) []*ResourceUsage {
 }
 
 // CheckViolations checks for resource limit violations
-func (rm *resourceMonitor) CheckViolations(limits *EnhancedResourceLimits) []*ResourceViolation {
+func (rm *resourceMonitor) CheckViolations(limits *ResourceLimits) []*ResourceViolation {
 	if rm.lastUsage == nil || limits == nil {
 		return nil
 	}
@@ -233,23 +233,23 @@ func (rm *resourceMonitor) CheckViolations(limits *EnhancedResourceLimits) []*Re
 	var violations []*ResourceViolation
 
 	// Check memory violations
-	if limits.MemoryLimits != nil {
-		violations = append(violations, rm.checkMemoryViolations(limits.MemoryLimits)...)
+	if limits.Memory != nil {
+		violations = append(violations, rm.checkMemoryViolations(limits.Memory)...)
 	}
 
 	// Check CPU violations
-	if limits.CPULimits != nil {
-		violations = append(violations, rm.checkCPUViolations(limits.CPULimits)...)
+	if limits.CPU != nil {
+		violations = append(violations, rm.checkCPUViolations(limits.CPU)...)
 	}
 
 	// Check I/O violations
-	if limits.IOLimits != nil {
-		violations = append(violations, rm.checkIOViolations(limits.IOLimits)...)
+	if limits.IO != nil {
+		violations = append(violations, rm.checkIOViolations(limits.IO)...)
 	}
 
 	// Check process violations
-	if limits.ProcessLimits != nil {
-		violations = append(violations, rm.checkProcessViolations(limits.ProcessLimits)...)
+	if limits.Process != nil {
+		violations = append(violations, rm.checkProcessViolations(limits.Process)...)
 	}
 
 	// Call violation callback for any violations

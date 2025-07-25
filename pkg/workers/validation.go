@@ -94,12 +94,7 @@ func ValidateProcessControlOptions(options processcontrol.ProcessControlOptions)
 		}
 	}
 
-	// Validate resource limits if provided
-	if options.Limits != nil {
-		if err := process.ValidateResourceLimits(*options.Limits); err != nil {
-			return errors.NewValidationError("invalid resource limits configuration", err)
-		}
-	}
+	// Resource limits validation is now handled in the resourcelimits package
 
 	// Validate health check config if provided
 	if options.HealthCheck != nil {

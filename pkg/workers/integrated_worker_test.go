@@ -11,6 +11,7 @@ import (
 	"github.com/core-tools/hsu-master/pkg/errors"
 	"github.com/core-tools/hsu-master/pkg/monitoring"
 	"github.com/core-tools/hsu-master/pkg/process"
+	"github.com/core-tools/hsu-master/pkg/resourcelimits"
 	"github.com/core-tools/hsu-master/pkg/workers/processcontrol"
 
 	"github.com/stretchr/testify/assert"
@@ -77,11 +78,14 @@ func createTestIntegratedUnit() *IntegratedUnit {
 				RetryDelay:  10 * time.Second,
 				BackoffRate: 2.0,
 			},
-			Limits: process.ResourceLimits{
-				CPU:          1.0,
-				Memory:       1024 * 1024 * 1024, // 1GB
-				MaxProcesses: 10,
-				MaxOpenFiles: 100,
+			Limits: resourcelimits.ResourceLimits{
+				Memory: &resourcelimits.MemoryLimits{
+					MaxRSS: 1024 * 1024 * 1024, // 1GB
+				},
+				Process: &resourcelimits.ProcessLimits{
+					MaxProcesses:       10,
+					MaxFileDescriptors: 100,
+				},
 			},
 			GracefulTimeout: 30 * time.Second,
 		},
@@ -154,10 +158,11 @@ func TestIntegratedWorker_ProcessControlOptions(t *testing.T) {
 
 	// Test resource limits
 	require.NotNil(t, options.Limits)
-	assert.Equal(t, 1.0, options.Limits.CPU)
-	assert.Equal(t, int64(1024*1024*1024), options.Limits.Memory)
-	assert.Equal(t, 10, options.Limits.MaxProcesses)
-	assert.Equal(t, 100, options.Limits.MaxOpenFiles)
+	require.NotNil(t, options.Limits.Memory)
+	require.NotNil(t, options.Limits.Process)
+	assert.Equal(t, int64(1024*1024*1024), options.Limits.Memory.MaxRSS)
+	assert.Equal(t, 10, options.Limits.Process.MaxProcesses)
+	assert.Equal(t, 100, options.Limits.Process.MaxFileDescriptors)
 
 	// Test graceful timeout
 	assert.Equal(t, 30*time.Second, options.GracefulTimeout)

@@ -3,8 +3,6 @@ package resourcelimits
 import (
 	"context"
 	"time"
-
-	"github.com/core-tools/hsu-master/pkg/process"
 )
 
 // ResourceMonitor provides real-time resource usage monitoring
@@ -28,7 +26,7 @@ type ResourceMonitor interface {
 // ResourceEnforcer applies and enforces resource limits
 type ResourceEnforcer interface {
 	// ApplyLimits applies resource limits to a process
-	ApplyLimits(pid int, limits *EnhancedResourceLimits) error
+	ApplyLimits(pid int, limits *ResourceLimits) error
 
 	// EnforcePolicy executes the policy action for a limit violation
 	EnforcePolicy(pid int, violation *ResourceViolation) error
@@ -108,49 +106,56 @@ const (
 	ResourcePolicyRestartAdjusted  ResourcePolicy = "restart_adjusted"  // Restart with increased limits
 )
 
-// EnhancedResourceLimits extends the basic ResourceLimits with policies and monitoring
-type EnhancedResourceLimits struct {
-	// Embed existing ResourceLimits
-	process.ResourceLimits `yaml:",inline"`
+// ResourceLimits provides comprehensive resource limits with policies and monitoring
+type ResourceLimits struct {
+	// Process priority (standalone field)
+	Priority int `yaml:"priority,omitempty"` // Process priority
 
-	// Memory limits with policies
-	MemoryLimits *MemoryLimits `yaml:"memory_limits,omitempty"`
+	// CPU shares for Linux cgroups (standalone field)
+	CPUShares int `yaml:"cpu_shares,omitempty"` // CPU weight (Linux cgroups)
 
-	// CPU limits with policies
-	CPULimits *CPULimits `yaml:"cpu_limits,omitempty"`
-
-	// I/O limits with policies
-	IOLimits *IOLimits `yaml:"io_limits,omitempty"`
-
-	// Process limits with policies
-	ProcessLimits *ProcessLimits `yaml:"process_limits,omitempty"`
-
-	// Monitoring configuration
+	// Advanced limits with policies and monitoring
+	Memory     *MemoryLimits             `yaml:"memory,omitempty"`
+	CPU        *CPULimits                `yaml:"cpu,omitempty"`
+	IO         *IOLimits                 `yaml:"io,omitempty"`
+	Process    *ProcessLimits            `yaml:"process,omitempty"`
 	Monitoring *ResourceMonitoringConfig `yaml:"monitoring,omitempty"`
 }
 
-// MemoryLimits defines memory-specific limits and policies
+// MemoryLimits defines memory-specific limits and policies (consolidated)
 type MemoryLimits struct {
-	MaxRSS           int64          `yaml:"max_rss,omitempty"`           // Max RSS in bytes
-	MaxVirtual       int64          `yaml:"max_virtual,omitempty"`       // Max virtual memory
+	// Basic memory limits (moved from top level)
+	MaxRSS     int64 `yaml:"max_rss,omitempty"`     // Max RSS in bytes (replaces old Memory field)
+	MaxVirtual int64 `yaml:"max_virtual,omitempty"` // Max virtual memory
+	MaxSwap    int64 `yaml:"max_swap,omitempty"`    // Max memory + swap (replaces MemorySwap)
+
+	// Policy and monitoring
 	WarningThreshold float64        `yaml:"warning_threshold,omitempty"` // Warning threshold (0-100%)
 	Policy           ResourcePolicy `yaml:"policy,omitempty"`            // Action to take
 	CheckInterval    time.Duration  `yaml:"check_interval,omitempty"`    // How often to check
 }
 
-// CPULimits defines CPU-specific limits and policies
+// CPULimits defines CPU-specific limits and policies (consolidated)
 type CPULimits struct {
-	MaxPercent       float64        `yaml:"max_percent,omitempty"`       // Max CPU percentage
-	MaxTime          time.Duration  `yaml:"max_time,omitempty"`          // Max total CPU time
+	// Basic CPU limits (moved from top level)
+	MaxCores   float64       `yaml:"max_cores,omitempty"`   // Number of CPU cores (replaces old CPU field)
+	MaxPercent float64       `yaml:"max_percent,omitempty"` // Max CPU percentage
+	MaxTime    time.Duration `yaml:"max_time,omitempty"`    // Max total CPU time
+
+	// Policy and monitoring
 	WarningThreshold float64        `yaml:"warning_threshold,omitempty"` // Warning threshold (0-100%)
 	Policy           ResourcePolicy `yaml:"policy,omitempty"`            // Action to take
 	CheckInterval    time.Duration  `yaml:"check_interval,omitempty"`    // How often to check
 }
 
-// IOLimits defines I/O-specific limits and policies
+// IOLimits defines I/O-specific limits and policies (consolidated)
 type IOLimits struct {
-	MaxReadRate      int64          `yaml:"max_read_rate,omitempty"`     // Bytes per second
-	MaxWriteRate     int64          `yaml:"max_write_rate,omitempty"`    // Bytes per second
+	// Basic I/O limits (moved from top level)
+	Weight      int   `yaml:"weight,omitempty"`        // I/O priority weight (replaces IOWeight)
+	MaxReadBPS  int64 `yaml:"max_read_bps,omitempty"`  // Read bandwidth limit (replaces IOReadBPS)
+	MaxWriteBPS int64 `yaml:"max_write_bps,omitempty"` // Write bandwidth limit (replaces IOWriteBPS)
+
+	// Advanced I/O limits
 	MaxReadOps       int64          `yaml:"max_read_ops,omitempty"`      // Operations per second
 	MaxWriteOps      int64          `yaml:"max_write_ops,omitempty"`     // Operations per second
 	WarningThreshold float64        `yaml:"warning_threshold,omitempty"` // Warning threshold (0-100%)
@@ -158,13 +163,17 @@ type IOLimits struct {
 	CheckInterval    time.Duration  `yaml:"check_interval,omitempty"`    // How often to check
 }
 
-// ProcessLimits defines process/file descriptor limits and policies
+// ProcessLimits defines process/file descriptor limits and policies (consolidated)
 type ProcessLimits struct {
-	MaxFileDescriptors int            `yaml:"max_file_descriptors,omitempty"` // Max open FDs
-	MaxChildProcesses  int            `yaml:"max_child_processes,omitempty"`  // Max child processes
-	WarningThreshold   float64        `yaml:"warning_threshold,omitempty"`    // Warning threshold (0-100%)
-	Policy             ResourcePolicy `yaml:"policy,omitempty"`               // Action to take
-	CheckInterval      time.Duration  `yaml:"check_interval,omitempty"`       // How often to check
+	// Basic process limits (moved from top level)
+	MaxProcesses       int `yaml:"max_processes,omitempty"`        // Maximum number of processes (replaces MaxProcesses)
+	MaxFileDescriptors int `yaml:"max_file_descriptors,omitempty"` // Max open FDs (replaces MaxOpenFiles)
+	MaxChildProcesses  int `yaml:"max_child_processes,omitempty"`  // Max child processes
+
+	// Policy and monitoring
+	WarningThreshold float64        `yaml:"warning_threshold,omitempty"` // Warning threshold (0-100%)
+	Policy           ResourcePolicy `yaml:"policy,omitempty"`            // Action to take
+	CheckInterval    time.Duration  `yaml:"check_interval,omitempty"`    // How often to check
 }
 
 // ResourceMonitoringConfig defines monitoring behavior

@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/core-tools/hsu-master/pkg/logging"
-	"github.com/core-tools/hsu-master/pkg/process"
 	"github.com/core-tools/hsu-master/pkg/processstate"
 )
 
@@ -25,7 +24,7 @@ func NewResourceEnforcer(logger logging.Logger) ResourceEnforcer {
 }
 
 // ApplyLimits applies resource limits to a process
-func (re *resourceEnforcer) ApplyLimits(pid int, limits *EnhancedResourceLimits) error {
+func (re *resourceEnforcer) ApplyLimits(pid int, limits *ResourceLimits) error {
 	if limits == nil {
 		return nil
 	}
@@ -39,30 +38,45 @@ func (re *resourceEnforcer) ApplyLimits(pid int, limits *EnhancedResourceLimits)
 
 	var errors []error
 
-	// Apply memory limits
-	if limits.MemoryLimits != nil {
-		if err := re.applyMemoryLimits(pid, limits.MemoryLimits); err != nil {
+	// Apply memory limits if specified
+	if limits.Memory != nil {
+		if err := re.applyMemoryLimits(pid, limits.Memory); err != nil {
 			errors = append(errors, fmt.Errorf("memory limits: %v", err))
 		}
 	}
 
-	// Apply CPU limits
-	if limits.CPULimits != nil {
-		if err := re.applyCPULimits(pid, limits.CPULimits); err != nil {
+	// Apply CPU limits if specified
+	if limits.CPU != nil {
+		if err := re.applyCPULimits(pid, limits.CPU); err != nil {
 			errors = append(errors, fmt.Errorf("CPU limits: %v", err))
 		}
 	}
 
-	// Apply process limits
-	if limits.ProcessLimits != nil {
-		if err := re.applyProcessLimits(pid, limits.ProcessLimits); err != nil {
+	// Apply I/O limits if specified (TODO: implement applyIOLimits method)
+	if limits.IO != nil {
+		re.logger.Debugf("I/O limits specified but not yet implemented for PID %d", pid)
+		// TODO: if err := re.applyIOLimits(pid, limits.IO); err != nil {
+		//	errors = append(errors, fmt.Errorf("I/O limits: %v", err))
+		// }
+	}
+
+	// Apply process limits if specified
+	if limits.Process != nil {
+		if err := re.applyProcessLimits(pid, limits.Process); err != nil {
 			errors = append(errors, fmt.Errorf("process limits: %v", err))
 		}
 	}
 
-	// Apply legacy ResourceLimits if present
-	if err := re.applyLegacyLimits(pid, &limits.ResourceLimits); err != nil {
-		errors = append(errors, fmt.Errorf("legacy limits: %v", err))
+	// Apply basic limits if present in nested structs
+	if limits.Memory != nil && (limits.Memory.MaxRSS > 0 || limits.Memory.MaxVirtual > 0) {
+		re.logger.Debugf("Applying memory limits to PID %d (MaxRSS: %d, MaxVirtual: %d)",
+			pid, limits.Memory.MaxRSS, limits.Memory.MaxVirtual)
+	}
+
+	if limits.Process != nil && limits.Process.MaxFileDescriptors > 0 {
+		if err := re.applyFileDescriptorLimit(pid, limits.Process.MaxFileDescriptors); err != nil {
+			errors = append(errors, fmt.Errorf("file descriptor limit: %v", err))
+		}
 	}
 
 	if len(errors) > 0 {
@@ -164,16 +178,6 @@ func (re *resourceEnforcer) applyProcessLimits(pid int, limits *ProcessLimits) e
 	}
 
 	re.logger.Debugf("Process limits applied to PID %d", pid)
-	return nil
-}
-
-// applyLegacyLimits applies the original ResourceLimits structure
-func (re *resourceEnforcer) applyLegacyLimits(pid int, limits *process.ResourceLimits) error {
-	// This provides backward compatibility with existing ResourceLimits
-	if limits.Memory > 0 || limits.MaxProcesses > 0 || limits.MaxOpenFiles > 0 {
-		re.logger.Debugf("Applying legacy resource limits to PID %d", pid)
-		// Implementation would apply these limits using platform-specific mechanisms
-	}
 	return nil
 }
 

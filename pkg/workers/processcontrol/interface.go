@@ -9,6 +9,7 @@ import (
 	"github.com/core-tools/hsu-master/pkg/monitoring"
 	"github.com/core-tools/hsu-master/pkg/process"
 	"github.com/core-tools/hsu-master/pkg/processfile"
+	"github.com/core-tools/hsu-master/pkg/resourcelimits"
 )
 
 // ProcessControl interface defines the contract for process control operations
@@ -45,7 +46,7 @@ type ProcessControlOptions struct {
 	AttachCmd  AttachCmd  // Attach command, nil if not attachable
 
 	// Resource management
-	Limits *process.ResourceLimits // nil if not limitable
+	Limits *resourcelimits.ResourceLimits // nil if not limitable
 
 	// Process restart
 	Restart *monitoring.RestartConfig // nil if not restartable
@@ -83,7 +84,7 @@ type ManagedProcessControlConfig struct {
 	Restart monitoring.RestartConfig `yaml:"restart"`
 
 	// Resource management
-	Limits process.ResourceLimits `yaml:"limits,omitempty"`
+	Limits resourcelimits.ResourceLimits `yaml:"limits,omitempty"`
 
 	/*
 		// I/O handling
