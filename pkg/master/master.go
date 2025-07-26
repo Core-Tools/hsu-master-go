@@ -11,6 +11,8 @@ import (
 	coreLogging "github.com/core-tools/hsu-core/pkg/logging"
 	masterControl "github.com/core-tools/hsu-master/pkg/control"
 	"github.com/core-tools/hsu-master/pkg/errors"
+	"github.com/core-tools/hsu-master/pkg/logcollection"
+	logconfig "github.com/core-tools/hsu-master/pkg/logcollection/config"
 	masterLogging "github.com/core-tools/hsu-master/pkg/logging"
 	"github.com/core-tools/hsu-master/pkg/workers"
 	"github.com/core-tools/hsu-master/pkg/workers/processcontrol"
@@ -46,12 +48,13 @@ type WorkerEntry struct {
 }
 
 type Master struct {
-	options     MasterOptions
-	server      coreControl.Server
-	logger      masterLogging.Logger
-	workers     map[string]*WorkerEntry // Combined map for controls and state machines
-	masterState MasterState             // Track master state
-	mutex       sync.Mutex
+	options              MasterOptions
+	server               coreControl.Server
+	logger               masterLogging.Logger
+	workers              map[string]*WorkerEntry // Combined map for controls and state machines
+	masterState          MasterState             // Track master state
+	mutex                sync.Mutex
+	logCollectionService logcollection.LogCollectionService // Log collection service (NEW)
 }
 
 func NewMaster(options MasterOptions, coreLogger coreLogging.Logger, masterLogger masterLogging.Logger) (*Master, error) {
@@ -505,4 +508,24 @@ func (m *Master) setMasterState(state MasterState) {
 	m.mutex.Lock()
 	m.masterState = state
 	m.mutex.Unlock()
+}
+
+// SetLogCollectionService sets the log collection service for the master (NEW)
+func (m *Master) SetLogCollectionService(service logcollection.LogCollectionService) {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+
+	m.logCollectionService = service
+	m.logger.Infof("Log collection service configured for master")
+}
+
+// getLogCollectionConfig creates a default log collection config for workers
+func (m *Master) getLogCollectionConfig() *logconfig.WorkerLogConfig {
+	if m.logCollectionService == nil {
+		return nil
+	}
+
+	// Create default worker log configuration
+	defaultConfig := logconfig.DefaultWorkerLogConfig()
+	return &defaultConfig
 }

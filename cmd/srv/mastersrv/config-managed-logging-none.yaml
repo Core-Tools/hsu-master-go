@@ -2,7 +2,6 @@ master:
   port: 50055
 
 workers:
-  # Simple managed worker (enabled defaults to true)
   - id: "test-managed-1"
     type: "managed"
     unit:

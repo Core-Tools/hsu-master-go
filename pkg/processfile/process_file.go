@@ -154,6 +154,41 @@ func (m *ProcessFileManager) ReadPortFile(workerID string) (int, error) {
 	return port, nil
 }
 
+// ===== LOG DIRECTORY METHODS =====
+
+// GenerateLogDirectoryPath generates the appropriate log directory path for the application
+func (m *ProcessFileManager) GenerateLogDirectoryPath() string {
+	baseDir := m.getLogBaseDirectory()
+
+	// Create app subdirectory if requested
+	if m.config.UseSubdirectory {
+		return filepath.Join(baseDir, m.config.AppName)
+	}
+
+	return baseDir
+}
+
+// GenerateWorkerLogDirectoryPath generates the log directory path for worker-specific logs
+func (m *ProcessFileManager) GenerateWorkerLogDirectoryPath() string {
+	return filepath.Join(m.GenerateLogDirectoryPath(), "workers")
+}
+
+// GenerateLogFilePath generates a complete log file path from a relative template
+func (m *ProcessFileManager) GenerateLogFilePath(relativeTemplate string) string {
+	logDir := m.GenerateLogDirectoryPath()
+	return filepath.Join(logDir, relativeTemplate)
+}
+
+// GenerateWorkerLogFilePath generates a worker-specific log file path from a relative template
+func (m *ProcessFileManager) GenerateWorkerLogFilePath(relativeTemplate string, workerID string) string {
+	workerLogDir := m.GenerateWorkerLogDirectoryPath()
+
+	// Replace {worker_id} placeholder in template
+	resolvedTemplate := strings.ReplaceAll(relativeTemplate, "{worker_id}", workerID)
+
+	return filepath.Join(workerLogDir, resolvedTemplate)
+}
+
 // getBaseDirectory returns the appropriate base directory for PID files
 func (m *ProcessFileManager) getBaseDirectory() string {
 	// Use explicit configuration if provided
@@ -333,5 +368,110 @@ func GetRecommendedProcessFileConfig(scenario string, appName string) ProcessFil
 			AppName:         appName,
 			UseSubdirectory: true,
 		}
+	}
+}
+
+// getLogBaseDirectory returns the appropriate base directory for log files
+func (m *ProcessFileManager) getLogBaseDirectory() string {
+	// Use explicit configuration if provided
+	if m.config.BaseDirectory != "" {
+		return filepath.Join(m.config.BaseDirectory, "logs")
+	}
+
+	// Use OS-appropriate defaults based on service context
+	switch m.config.ServiceContext {
+	case SystemService:
+		return m.getSystemLogDirectory()
+	case UserService:
+		return m.getUserLogDirectory()
+	case SessionService:
+		return m.getSessionLogDirectory()
+	default:
+		return m.getSystemLogDirectory()
+	}
+}
+
+// getSystemLogDirectory returns the directory for system service logs
+func (m *ProcessFileManager) getSystemLogDirectory() string {
+	switch runtime.GOOS {
+	case "windows":
+		// Use ProgramData for system service logs on Windows
+		programData := os.Getenv("PROGRAMDATA")
+		if programData == "" {
+			programData = "C:\\ProgramData"
+		}
+		return filepath.Join(programData, "logs")
+
+	case "darwin":
+		// macOS system service logs
+		return "/var/log"
+
+	default:
+		// Linux and other Unix systems
+		return "/var/log"
+	}
+}
+
+// getUserLogDirectory returns the directory for user service logs
+func (m *ProcessFileManager) getUserLogDirectory() string {
+	switch runtime.GOOS {
+	case "windows":
+		// Use LocalAppData for user service logs on Windows
+		localAppData := os.Getenv("LOCALAPPDATA")
+		if localAppData == "" {
+			userProfile := os.Getenv("USERPROFILE")
+			if userProfile != "" {
+				localAppData = filepath.Join(userProfile, "AppData", "Local")
+			} else {
+				localAppData = "C:\\Users\\Default\\AppData\\Local"
+			}
+		}
+		return filepath.Join(localAppData, "logs")
+
+	case "darwin":
+		// macOS user service logs
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return "/tmp/logs"
+		}
+		return filepath.Join(homeDir, "Library", "Logs")
+
+	default:
+		// Linux and other Unix systems
+		// Use XDG_DATA_HOME or ~/.local/share for user logs
+		if dataHome := os.Getenv("XDG_DATA_HOME"); dataHome != "" {
+			return filepath.Join(dataHome, "logs")
+		}
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return "/tmp/logs"
+		}
+		return filepath.Join(homeDir, ".local", "share", "logs")
+	}
+}
+
+// getSessionLogDirectory returns the directory for session service logs
+func (m *ProcessFileManager) getSessionLogDirectory() string {
+	switch runtime.GOOS {
+	case "windows":
+		// Windows doesn't have a direct equivalent, use temp directory
+		return filepath.Join(os.TempDir(), "logs")
+
+	case "darwin":
+		// macOS session service logs
+		return filepath.Join(os.TempDir(), "logs")
+
+	default:
+		// Linux systemd session services
+		uid := os.Getuid()
+		sessionDir := fmt.Sprintf("/run/user/%d/logs", uid)
+
+		// Check if session directory exists
+		if _, err := os.Stat(filepath.Dir(sessionDir)); err == nil {
+			return sessionDir
+		}
+
+		// Fallback to temp directory
+		return filepath.Join("/tmp", "logs")
 	}
 }

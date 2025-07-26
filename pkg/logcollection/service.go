@@ -5,11 +5,13 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/core-tools/hsu-master/pkg/logcollection/config"
+	"github.com/core-tools/hsu-master/pkg/processfile"
 )
 
 // ===== MAIN LOG COLLECTION SERVICE =====
@@ -20,9 +22,10 @@ type logCollectionService struct {
 	config config.LogCollectionConfig
 
 	// Core components
-	logger  StructuredLogger
-	workers map[string]*workerLogCollector
-	outputs []LogOutputWriter
+	logger      StructuredLogger
+	workers     map[string]*workerLogCollector
+	outputs     []LogOutputWriter
+	pathManager *processfile.ProcessFileManager // NEW: For resolving log paths
 
 	// State management
 	mu      sync.RWMutex
@@ -39,16 +42,58 @@ type logCollectionService struct {
 
 // NewLogCollectionService creates a new log collection service
 func NewLogCollectionService(cfg config.LogCollectionConfig, logger StructuredLogger) LogCollectionService {
+	return NewLogCollectionServiceWithPathManager(cfg, logger, nil)
+}
+
+// NewLogCollectionServiceWithPathManager creates a new log collection service with custom path manager
+func NewLogCollectionServiceWithPathManager(cfg config.LogCollectionConfig, logger StructuredLogger, pathManager *processfile.ProcessFileManager) LogCollectionService {
 	ctx, cancel := context.WithCancel(context.Background())
 
-	return &logCollectionService{
-		config:  cfg,
-		logger:  logger,
-		workers: make(map[string]*workerLogCollector),
-		outputs: make([]LogOutputWriter, 0),
-		ctx:     ctx,
-		cancel:  cancel,
+	// Create default path manager if none provided
+	if pathManager == nil {
+		pathConfig := processfile.GetRecommendedProcessFileConfig("system", "hsu-master")
+		pathManager = processfile.NewProcessFileManager(pathConfig, &simpleLoggerAdapter{logger})
 	}
+
+	return &logCollectionService{
+		config:      cfg,
+		logger:      logger,
+		workers:     make(map[string]*workerLogCollector),
+		outputs:     make([]LogOutputWriter, 0),
+		pathManager: pathManager,
+		ctx:         ctx,
+		cancel:      cancel,
+	}
+}
+
+// resolveOutputPath resolves a relative path template to an absolute path
+func (s *logCollectionService) resolveOutputPath(outputConfig config.OutputTargetConfig) string {
+	if outputConfig.Type != "file" {
+		return outputConfig.Path
+	}
+
+	// Check if path is already absolute
+	if filepath.IsAbs(outputConfig.Path) {
+		return outputConfig.Path
+	}
+
+	// Resolve relative path using path manager
+	return s.pathManager.GenerateLogFilePath(outputConfig.Path)
+}
+
+// resolveWorkerOutputPath resolves a worker-specific path template to an absolute path
+func (s *logCollectionService) resolveWorkerOutputPath(outputConfig config.OutputTargetConfig, workerID string) string {
+	if outputConfig.Type != "file" {
+		return outputConfig.Path
+	}
+
+	// Check if path is already absolute
+	if filepath.IsAbs(outputConfig.Path) {
+		return outputConfig.Path
+	}
+
+	// Resolve relative path using path manager for worker logs
+	return s.pathManager.GenerateWorkerLogFilePath(outputConfig.Path, workerID)
 }
 
 // ===== SERVICE LIFECYCLE =====
@@ -568,4 +613,43 @@ func (s *stdoutWriter) Flush() error {
 
 func (s *stdoutWriter) Close() error {
 	return nil
+}
+
+// ===== LOGGER ADAPTER =====
+
+// simpleLoggerAdapter adapts StructuredLogger to logging.Logger interface for ProcessFileManager
+type simpleLoggerAdapter struct {
+	logger StructuredLogger
+}
+
+func (s *simpleLoggerAdapter) Debugf(format string, args ...interface{}) {
+	s.logger.Debugf(format, args...)
+}
+
+func (s *simpleLoggerAdapter) Infof(format string, args ...interface{}) {
+	s.logger.Infof(format, args...)
+}
+
+func (s *simpleLoggerAdapter) Warnf(format string, args ...interface{}) {
+	s.logger.Warnf(format, args...)
+}
+
+func (s *simpleLoggerAdapter) Errorf(format string, args ...interface{}) {
+	s.logger.Errorf(format, args...)
+}
+
+func (s *simpleLoggerAdapter) LogLevelf(level int, format string, args ...interface{}) {
+	// Convert int level to our LogLevel and delegate
+	switch level {
+	case 0: // Debug
+		s.logger.Debugf(format, args...)
+	case 1: // Info
+		s.logger.Infof(format, args...)
+	case 2: // Warn
+		s.logger.Warnf(format, args...)
+	case 3: // Error
+		s.logger.Errorf(format, args...)
+	default:
+		s.logger.Infof(format, args...)
+	}
 }

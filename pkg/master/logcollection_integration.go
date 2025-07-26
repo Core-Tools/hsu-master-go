@@ -1,0 +1,157 @@
+package master
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/core-tools/hsu-master/pkg/logcollection"
+	"github.com/core-tools/hsu-master/pkg/logcollection/config"
+	"github.com/core-tools/hsu-master/pkg/logging"
+	"github.com/core-tools/hsu-master/pkg/processfile"
+)
+
+// LogCollectionIntegration handles log collection setup and management for the master service
+type LogCollectionIntegration struct {
+	service     logcollection.LogCollectionService
+	pathManager *processfile.ProcessFileManager
+	logger      logging.Logger
+	enabled     bool
+}
+
+// NewLogCollectionIntegration creates a new log collection integration
+func NewLogCollectionIntegration(masterConfig *MasterConfig, logger logging.Logger) (*LogCollectionIntegration, error) {
+	integration := &LogCollectionIntegration{
+		logger:  logger,
+		enabled: false,
+	}
+
+	// Check if log collection is configured and enabled
+	if masterConfig.LogCollection == nil || !masterConfig.LogCollection.Enabled {
+		logger.Debugf("Log collection is disabled or not configured")
+		return integration, nil
+	}
+
+	// Create path manager for log files
+	pathConfig := processfile.GetRecommendedProcessFileConfig("system", "hsu-master")
+	pathManager := processfile.NewProcessFileManager(pathConfig, &loggerAdapter{logger})
+	integration.pathManager = pathManager
+
+	// Create structured logger for log collection service
+	structuredLogger, err := logcollection.NewStructuredLogger("zap", logcollection.InfoLevel)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create structured logger: %w", err)
+	}
+
+	// Create log collection service with path manager
+	service := logcollection.NewLogCollectionServiceWithPathManager(
+		*masterConfig.LogCollection,
+		structuredLogger,
+		pathManager,
+	)
+
+	integration.service = service
+	integration.enabled = true
+
+	logger.Infof("Log collection integration initialized successfully")
+
+	return integration, nil
+}
+
+// Start starts the log collection service
+func (l *LogCollectionIntegration) Start(ctx context.Context) error {
+	if !l.enabled {
+		return nil
+	}
+
+	if err := l.service.Start(ctx); err != nil {
+		return fmt.Errorf("failed to start log collection service: %w", err)
+	}
+
+	l.logger.Infof("Log collection service started")
+	return nil
+}
+
+// Stop stops the log collection service
+func (l *LogCollectionIntegration) Stop() error {
+	if !l.enabled {
+		return nil
+	}
+
+	if err := l.service.Stop(); err != nil {
+		return fmt.Errorf("failed to stop log collection service: %w", err)
+	}
+
+	l.logger.Infof("Log collection service stopped")
+	return nil
+}
+
+// GetLogCollectionService returns the log collection service for use by workers
+func (l *LogCollectionIntegration) GetLogCollectionService() logcollection.LogCollectionService {
+	if !l.enabled {
+		return nil
+	}
+	return l.service
+}
+
+// GetWorkerLogConfig returns the appropriate log configuration for a worker
+func (l *LogCollectionIntegration) GetWorkerLogConfig(workerID string, workerConfig WorkerConfig) *config.WorkerLogConfig {
+	if !l.enabled {
+		return nil
+	}
+
+	// Check if worker has specific log collection configuration
+	// For now, we'll look for this in the worker config structure
+	// TODO: Add worker-specific log config parsing when needed
+
+	// Use default worker log configuration
+	defaultConfig := config.DefaultWorkerLogConfig()
+	return &defaultConfig
+}
+
+// IsEnabled returns whether log collection is enabled
+func (l *LogCollectionIntegration) IsEnabled() bool {
+	return l.enabled
+}
+
+// GetPathManager returns the path manager for log file path resolution
+func (l *LogCollectionIntegration) GetPathManager() *processfile.ProcessFileManager {
+	return l.pathManager
+}
+
+// ===== ADAPTER =====
+
+// loggerAdapter adapts the master logging.Logger to the processfile logging interface
+type loggerAdapter struct {
+	logger logging.Logger
+}
+
+func (l *loggerAdapter) Debugf(format string, args ...interface{}) {
+	l.logger.Debugf(format, args...)
+}
+
+func (l *loggerAdapter) Infof(format string, args ...interface{}) {
+	l.logger.Infof(format, args...)
+}
+
+func (l *loggerAdapter) Warnf(format string, args ...interface{}) {
+	l.logger.Warnf(format, args...)
+}
+
+func (l *loggerAdapter) Errorf(format string, args ...interface{}) {
+	l.logger.Errorf(format, args...)
+}
+
+func (l *loggerAdapter) LogLevelf(level int, format string, args ...interface{}) {
+	switch level {
+	case 0:
+		l.logger.Debugf(format, args...)
+	case 1:
+		l.logger.Infof(format, args...)
+	case 2:
+		l.logger.Warnf(format, args...)
+	case 3:
+		l.logger.Errorf(format, args...)
+	default:
+		l.logger.Infof(format, args...)
+	}
+}

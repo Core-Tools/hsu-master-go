@@ -6,6 +6,8 @@ import (
 	"os"
 	"time"
 
+	"github.com/core-tools/hsu-master/pkg/logcollection"
+	"github.com/core-tools/hsu-master/pkg/logcollection/config"
 	"github.com/core-tools/hsu-master/pkg/monitoring"
 	"github.com/core-tools/hsu-master/pkg/process"
 	"github.com/core-tools/hsu-master/pkg/processfile"
@@ -47,6 +49,10 @@ type ProcessControlOptions struct {
 
 	// Process restart
 	Restart *monitoring.RestartConfig // nil if not restartable
+
+	// Log collection (NEW)
+	LogCollectionService logcollection.LogCollectionService // Log collection service
+	LogConfig            *config.WorkerLogConfig            // Log collection configuration for this worker
 
 	// Health check override
 	HealthCheck *monitoring.HealthCheckConfig // nil if not health checkable or if ExecuteCmd/AttachCmd are provided

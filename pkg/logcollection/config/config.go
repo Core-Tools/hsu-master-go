@@ -278,7 +278,7 @@ func DefaultLogCollectionConfig() LogCollectionConfig {
 			Targets: []OutputTargetConfig{
 				{
 					Type:   "file",
-					Path:   "/var/log/hsu-master/aggregated.log",
+					Path:   "aggregated.log", // Relative template - will be resolved at runtime
 					Format: "enhanced_plain",
 				},
 			},
@@ -295,7 +295,7 @@ func DefaultLogCollectionConfig() LogCollectionConfig {
 		},
 		DefaultWorker: DefaultWorkerLogConfig(),
 		System: SystemConfig{
-			WorkerDirectory: "/var/log/hsu-master/workers",
+			WorkerDirectory: "workers", // Relative template - will be resolved at runtime
 			BufferSize:      "1MB",
 			FlushInterval:   5 * time.Second,
 			MaxWorkers:      100,
@@ -330,7 +330,7 @@ func DefaultWorkerLogConfig() WorkerLogConfig {
 				Stdout: []OutputTargetConfig{
 					{
 						Type:   "file",
-						Path:   "/var/log/hsu-master/workers/{worker_id}-stdout.log",
+						Path:   "{worker_id}-stdout.log", // Relative template - will be resolved at runtime
 						Format: "enhanced_plain",
 						Rotation: RotationConfig{
 							MaxSize:  "100MB",
@@ -342,7 +342,7 @@ func DefaultWorkerLogConfig() WorkerLogConfig {
 				Stderr: []OutputTargetConfig{
 					{
 						Type:   "file",
-						Path:   "/var/log/hsu-master/workers/{worker_id}-stderr.log",
+						Path:   "{worker_id}-stderr.log", // Relative template - will be resolved at runtime
 						Format: "enhanced_plain",
 						Rotation: RotationConfig{
 							MaxSize:  "100MB",

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/core-tools/hsu-master/pkg/errors"
+	"github.com/core-tools/hsu-master/pkg/logcollection"
 	"github.com/core-tools/hsu-master/pkg/logging"
 	"github.com/core-tools/hsu-master/pkg/monitoring"
 	"github.com/core-tools/hsu-master/pkg/process"
@@ -42,6 +43,9 @@ type processControl struct {
 
 	// Persistent restart tracking (survives health monitor recreation)
 	restartCircuitBreaker RestartCircuitBreaker
+
+	// Log collection (NEW)
+	logCollectionActive bool // Track if log collection is active for this worker
 
 	// Process lifecycle state management
 	state ProcessState
@@ -132,6 +136,12 @@ func (pc *processControl) startInternal(ctx context.Context) error {
 
 	pc.process = process
 	pc.stdout = stdout
+
+	// Start log collection if service is available (NEW)
+	if err := pc.startLogCollection(ctx, process, stdout); err != nil {
+		pc.logger.Warnf("Failed to start log collection for worker %s: %v", pc.workerID, err)
+		// Don't fail process start due to log collection issues
+	}
 
 	healthMonitor, err := pc.startHealthCheck(ctx, process.Pid, healthCheckConfig)
 	if err != nil {
@@ -601,6 +611,11 @@ func (pc *processControl) terminateProcessWithPolicy(ctx context.Context, policy
 
 // cleanupResourcesUnderLock performs resource cleanup while holding the mutex
 func (pc *processControl) cleanupResourcesUnderLock() {
+	// Stop log collection
+	if err := pc.stopLogCollection(); err != nil {
+		pc.logger.Warnf("Error stopping log collection for worker %s: %v", pc.workerID, err)
+	}
+
 	// Stop resource monitoring
 	if pc.resourceManager != nil {
 		pc.resourceManager.Stop()
@@ -764,4 +779,58 @@ func (pc *processControl) safeGetState() ProcessState {
 	pc.mutex.RLock()
 	defer pc.mutex.RUnlock() // ✅ AUTOMATIC unlock - no fragility!
 	return pc.state
+}
+
+// ===== LOG COLLECTION INTEGRATION =====
+
+// startLogCollection starts log collection for the process if service is available
+func (pc *processControl) startLogCollection(ctx context.Context, process *os.Process, stdout io.ReadCloser) error {
+	// Check if log collection service is available
+	if pc.config.LogCollectionService == nil {
+		pc.logger.Debugf("No log collection service configured for worker %s", pc.workerID)
+		return nil
+	}
+
+	// Check if log collection config is available
+	if pc.config.LogConfig == nil {
+		pc.logger.Debugf("No log collection config for worker %s", pc.workerID)
+		return nil
+	}
+
+	// Register worker with log collection service
+	if err := pc.config.LogCollectionService.RegisterWorker(pc.workerID, *pc.config.LogConfig); err != nil {
+		return fmt.Errorf("failed to register worker for log collection: %w", err)
+	}
+
+	// For managed processes, we have direct access to stdout and can create stderr access
+	// Collect from the stdout stream we have
+	if pc.config.LogConfig.CaptureStdout && stdout != nil {
+		if err := pc.config.LogCollectionService.CollectFromStream(pc.workerID, stdout, logcollection.StdoutStream); err != nil {
+			return fmt.Errorf("failed to start stdout collection: %w", err)
+		}
+	}
+
+	// Note: For stderr collection, we'd need to modify the startProcess method
+	// to return both stdout and stderr streams. For now, we collect stdout only.
+
+	pc.logCollectionActive = true
+	pc.logger.Infof("Log collection started for worker %s", pc.workerID)
+
+	return nil
+}
+
+// stopLogCollection stops log collection for the worker
+func (pc *processControl) stopLogCollection() error {
+	if !pc.logCollectionActive || pc.config.LogCollectionService == nil {
+		return nil
+	}
+
+	if err := pc.config.LogCollectionService.UnregisterWorker(pc.workerID); err != nil {
+		return fmt.Errorf("failed to unregister worker from log collection: %w", err)
+	}
+
+	pc.logCollectionActive = false
+	pc.logger.Infof("Log collection stopped for worker %s", pc.workerID)
+
+	return nil
 }

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/core-tools/hsu-master/pkg/errors"
+	logconfig "github.com/core-tools/hsu-master/pkg/logcollection/config"
 	"github.com/core-tools/hsu-master/pkg/logging"
 	"github.com/core-tools/hsu-master/pkg/monitoring"
 	"github.com/core-tools/hsu-master/pkg/workers"
@@ -15,8 +16,9 @@ import (
 
 // MasterConfig represents the top-level configuration file structure
 type MasterConfig struct {
-	Master  MasterConfigOptions `yaml:"master"`
-	Workers []WorkerConfig      `yaml:"workers"`
+	Master        MasterConfigOptions            `yaml:"master"`
+	Workers       []WorkerConfig                 `yaml:"workers"`
+	LogCollection *logconfig.LogCollectionConfig `yaml:"log_collection,omitempty"` // Optional log collection configuration
 }
 
 // MasterConfigOptions represents master-level configuration

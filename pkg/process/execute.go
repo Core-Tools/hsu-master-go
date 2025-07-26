@@ -126,24 +126,3 @@ func ensureExecutable(path string) error {
 
 	return nil
 }
-
-/*
-	type output struct {
-		logger logging.Logger
-	}
-
-	func (r *output) read(stdout io.ReadCloser) {
-		defer stdout.Close()
-		lineCount := 0
-		scanner := bufio.NewScanner(stdout)
-		for scanner.Scan() {
-			lineCount++
-			// Note: Individual line output logging removed to prevent log flooding
-			// Process output is still captured and can be accessed via other means
-		}
-		if err := scanner.Err(); err != nil {
-			r.logger.Errorf("stdout.Read failed: %v", err)
-		}
-		r.logger.Debugf("Process output captured: %d lines", lineCount)
-	}
-*/

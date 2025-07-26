@@ -1,0 +1,1 @@
+mastersrv.exe --config config-managed-logging-none.yaml --enable-log

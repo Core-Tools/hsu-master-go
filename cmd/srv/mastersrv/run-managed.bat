@@ -1,1 +1,1 @@
-mastersrv.exe --config config-managed.yaml
+mastersrv.exe --config config-managed-logging-none.yaml
