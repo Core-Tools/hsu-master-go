@@ -326,7 +326,7 @@ func (pc *processControl) startResourceMonitoring(ctx context.Context, pid int) 
 	resourceManager.SetViolationCallback(pc.handleResourceViolation)
 
 	// Start monitoring
-	err := pc.resourceManager.Start(ctx)
+	err := resourceManager.Start(ctx)
 	if err != nil {
 		return nil, errors.NewInternalError("failed to start resource monitoring", err).WithContext("id", pc.workerID)
 	}
