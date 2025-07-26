@@ -4,18 +4,19 @@ import (
 	"fmt"
 	"os"
 
-	sprintfLogging "github.com/core-tools/hsu-core/pkg/logging/sprintf"
+	sprintflogging "github.com/core-tools/hsu-core/pkg/logging/sprintf"
 
-	coreLogging "github.com/core-tools/hsu-core/pkg/logging"
-	masterLogging "github.com/core-tools/hsu-master/pkg/logging"
+	corelogging "github.com/core-tools/hsu-core/pkg/logging"
+	masterlogging "github.com/core-tools/hsu-master/pkg/logging"
 	master "github.com/core-tools/hsu-master/pkg/master"
 
 	flags "github.com/jessevdk/go-flags"
 )
 
 type flagOptions struct {
-	Config    string `long:"config" short:"c" description:"Configuration file path (YAML)" required:"true"`
-	EnableLog bool   `long:"enable-log" description:"Enable log collection (uses defaults if no config)"`
+	Config      string `long:"config" short:"c" description:"Configuration file path (YAML)" required:"true"`
+	EnableLog   bool   `long:"enable-log" description:"Enable log collection (uses defaults if no config)"`
+	RunDuration int    `long:"run-duration" description:"Duration in seconds to run the master (debug feature)"`
 }
 
 func logPrefix(module string) string {
@@ -33,38 +34,27 @@ func main() {
 		os.Exit(1)
 	}
 
-	logger := sprintfLogging.NewStdSprintfLogger()
+	logger := sprintflogging.NewStdSprintfLogger()
 
 	// Create loggers
-	coreLogger := coreLogging.NewLogger(
-		logPrefix("hsu-core"), coreLogging.LogFuncs{
+	coreLogger := corelogging.NewLogger(
+		logPrefix("hsu-core"), corelogging.LogFuncs{
 			Debugf: logger.Debugf,
 			Infof:  logger.Infof,
 			Warnf:  logger.Warnf,
 			Errorf: logger.Errorf,
 		})
-	masterLogger := masterLogging.NewLogger(
-		logPrefix("hsu-master"), masterLogging.LogFuncs{
+	masterLogger := masterlogging.NewLogger(
+		logPrefix("hsu-master"), masterlogging.LogFuncs{
 			Debugf: logger.Debugf,
 			Infof:  logger.Infof,
 			Warnf:  logger.Warnf,
 			Errorf: logger.Errorf,
 		})
 
-	// Run with configuration file
-	logger.Infof("Starting HSU Master with configuration file: %s", opts.Config)
-
-	if opts.EnableLog {
-		logger.Infof("Log collection is ENABLED - worker logs will be collected!")
-		// TODO: Use enhanced runner when ready
-		err = master.RunWithConfigAndLogCollection(opts.Config, coreLogger, masterLogger)
-	} else {
-		logger.Infof("Log collection is DISABLED - using standard runner")
-		err = master.RunWithConfig(opts.Config, coreLogger, masterLogger)
-	}
-
+	err = master.Run(opts.RunDuration, opts.Config, opts.EnableLog, coreLogger, masterLogger)
 	if err != nil {
-		logger.Errorf("Failed to run with configuration: %v", err)
+		logger.Errorf("Failed to run: %v", err)
 		os.Exit(1)
 	}
 }

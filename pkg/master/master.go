@@ -6,14 +6,14 @@ import (
 	"sync"
 	"time"
 
-	coreControl "github.com/core-tools/hsu-core/pkg/control"
-	coreDomain "github.com/core-tools/hsu-core/pkg/domain"
-	coreLogging "github.com/core-tools/hsu-core/pkg/logging"
-	masterControl "github.com/core-tools/hsu-master/pkg/control"
+	corecontrol "github.com/core-tools/hsu-core/pkg/control"
+	coredomain "github.com/core-tools/hsu-core/pkg/domain"
+	corelogging "github.com/core-tools/hsu-core/pkg/logging"
+	mastercontrol "github.com/core-tools/hsu-master/pkg/control"
 	"github.com/core-tools/hsu-master/pkg/errors"
 	"github.com/core-tools/hsu-master/pkg/logcollection"
 	logconfig "github.com/core-tools/hsu-master/pkg/logcollection/config"
-	masterLogging "github.com/core-tools/hsu-master/pkg/logging"
+	masterlogging "github.com/core-tools/hsu-master/pkg/logging"
 	"github.com/core-tools/hsu-master/pkg/workers"
 	"github.com/core-tools/hsu-master/pkg/workers/processcontrol"
 	"github.com/core-tools/hsu-master/pkg/workers/processcontrolimpl"
@@ -21,7 +21,8 @@ import (
 )
 
 type MasterOptions struct {
-	Port int
+	Port                 int
+	ForceShutdownTimeout time.Duration
 }
 
 // MasterState represents the current state of the master server
@@ -49,32 +50,32 @@ type WorkerEntry struct {
 
 type Master struct {
 	options              MasterOptions
-	server               coreControl.Server
-	logger               masterLogging.Logger
+	server               corecontrol.Server
+	logger               masterlogging.Logger
 	workers              map[string]*WorkerEntry // Combined map for controls and state machines
 	masterState          MasterState             // Track master state
 	mutex                sync.Mutex
-	logCollectionService logcollection.LogCollectionService // Log collection service (NEW)
+	logCollectionService logcollection.LogCollectionService // Log collection service
 }
 
-func NewMaster(options MasterOptions, coreLogger coreLogging.Logger, masterLogger masterLogging.Logger) (*Master, error) {
+func NewMaster(options MasterOptions, coreLogger corelogging.Logger, masterLogger masterlogging.Logger) (*Master, error) {
 	// Create gRPC server
-	serverOptions := coreControl.ServerOptions{
+	serverOptions := corecontrol.ServerOptions{
 		Port: options.Port,
 	}
 
-	server, err := coreControl.NewServer(serverOptions, coreLogger)
+	server, err := corecontrol.NewServer(serverOptions, coreLogger)
 	if err != nil {
 		return nil, errors.NewInternalError("failed to create server", err)
 	}
 
 	// Register core services
-	coreHandler := coreDomain.NewDefaultHandler(coreLogger)
-	coreControl.RegisterGRPCServerHandler(server.GRPC(), coreHandler, coreLogger)
+	coreHandler := coredomain.NewDefaultHandler(coreLogger)
+	corecontrol.RegisterGRPCServerHandler(server.GRPC(), coreHandler, coreLogger)
 
 	// Register business logic services
 	masterHandler := NewMasterHandler(masterLogger)
-	masterControl.RegisterGRPCServerHandler(server.GRPC(), masterHandler, masterLogger)
+	mastercontrol.RegisterGRPCServerHandler(server.GRPC(), masterHandler, masterLogger)
 
 	master := &Master{
 		options:     options,
@@ -132,7 +133,7 @@ func (m *Master) AddWorker(worker workers.Worker) error {
 	}
 
 	// Create worker logger
-	logger := masterLogging.NewLogger("worker: "+id+" , ", masterLogging.LogFuncs{
+	logger := masterlogging.NewLogger("worker: "+id+" , ", masterlogging.LogFuncs{
 		Debugf: m.logger.Debugf,
 		Infof:  m.logger.Infof,
 		Warnf:  m.logger.Warnf,
@@ -344,50 +345,47 @@ func (m *Master) StopWorker(ctx context.Context, id string) error {
 	return nil
 }
 
-const DefaultForcedShutdownTimeout = 25 * time.Second
-
-func (m *Master) Run(ctx context.Context) {
-	m.RunWithOptions(RunOptions{Context: ctx})
-}
-
-type RunOptions struct {
-	Context               context.Context
-	ForcedShutdownTimeout time.Duration
-	Stopped               chan struct{}
-}
-
-func (m *Master) RunWithOptions(options RunOptions) {
+func (m *Master) Start(ctx context.Context) {
 	m.logger.Infof("Starting master...")
+
+	// Start the server
+	m.server.Start(ctx)
 
 	// Transition master to running state
 	m.setMasterState(MasterStateRunning)
 
-	m.logger.Infof("Master started successfully, ready to manage workers")
+	m.logger.Infof("Master started")
 
-	// Start the server (blocks until shutdown)
-	coreServerRunOptions := coreControl.RunOptions{
-		Context:               options.Context,
-		ForcedShutdownTimeout: options.ForcedShutdownTimeout,
-		Stopped:               options.Stopped,
+}
+
+func (m *Master) Stop(ctx context.Context) {
+	m.logger.Infof("Stopping master...")
+
+	// Transition to stopping state
+	m.setMasterState(MasterStateStopping)
+
+	if ctx == nil {
+		ctx = context.Background()
 	}
-	m.server.RunWithOptions(coreServerRunOptions, func() {
-		m.logger.Infof("Shutting down master...")
 
-		// Transition to stopping state
-		m.setMasterState(MasterStateStopping)
+	forcedShutdownTimeout := m.options.ForceShutdownTimeout
+	if forcedShutdownTimeout <= 0 {
+		forcedShutdownTimeout = 30 * time.Second // Timeout super-default
+	}
 
-		// Shutdown workers
-		ctx := options.Context
-		if ctx == nil {
-			ctx = context.Background()
-		}
-		m.stopProcessControls(ctx)
+	// Set forced shutdown timeout, it will be used for both server and workers
+	ctx, _ = context.WithTimeout(ctx, forcedShutdownTimeout)
 
-		// Transition to stopped state
-		m.setMasterState(MasterStateStopped)
+	// Stop server
+	m.server.Shutdown(ctx)
 
-		m.logger.Infof("Master shutdown complete")
-	})
+	// Stop workers
+	m.stopWorkerProcessControls(ctx)
+
+	// Transition to stopped state
+	m.setMasterState(MasterStateStopped)
+
+	m.logger.Infof("Master stopped")
 }
 
 // GetAllWorkerStates returns state information for all workers
@@ -456,8 +454,12 @@ func (m *Master) GetMasterState() MasterState {
 	return m.masterState
 }
 
-func (m *Master) stopProcessControls(ctx context.Context) {
+func (m *Master) stopWorkerProcessControls(ctx context.Context) {
 	m.logger.Infof("Stopping process controls...")
+
+	if ctx == nil {
+		ctx = context.Background()
+	}
 
 	// 1. Get all process controls under lock
 	workerEntriesCopy := m.getAllWorkers()

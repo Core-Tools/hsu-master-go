@@ -10,6 +10,7 @@ import (
 	"github.com/core-tools/hsu-master/pkg/logging"
 	"github.com/core-tools/hsu-master/pkg/monitoring"
 	"github.com/core-tools/hsu-master/pkg/workers"
+	"github.com/core-tools/hsu-master/pkg/workers/processcontrol"
 
 	"gopkg.in/yaml.v3"
 )
@@ -369,4 +370,86 @@ func validateWorkerUnitConfig(workerType WorkerType, unitConfig WorkerUnitConfig
 	default:
 		return errors.NewValidationError(fmt.Sprintf("unsupported worker type: %s", workerType), nil)
 	}
+}
+
+// CreateWorkersFromConfigWithLogCollection creates workers with log collection support
+func CreateWorkersFromConfigWithLogCollection(
+	config *MasterConfig,
+	logger logging.Logger,
+	logIntegration *LogCollectionIntegration,
+) ([]workers.Worker, error) {
+	if config == nil {
+		return nil, errors.NewValidationError("configuration cannot be nil", nil)
+	}
+
+	var workersResult []workers.Worker
+
+	for i, workerConfig := range config.Workers {
+		// Skip disabled workers
+		if workerConfig.Enabled != nil && !*workerConfig.Enabled {
+			logger.Infof("Skipping disabled worker, id: %s", workerConfig.ID)
+			continue
+		}
+
+		// Create worker with log collection support
+		worker, err := createWorkerFromConfigWithLogCollection(workerConfig, logger, logIntegration)
+		if err != nil {
+			return nil, errors.NewValidationError(
+				fmt.Sprintf("failed to create worker at index %d", i),
+				err,
+			).WithContext("worker_id", workerConfig.ID).WithContext("worker_index", fmt.Sprintf("%d", i))
+		}
+
+		workersResult = append(workersResult, worker)
+	}
+
+	return workersResult, nil
+}
+
+// createWorkerFromConfigWithLogCollection creates a single worker with log collection support
+func createWorkerFromConfigWithLogCollection(
+	config WorkerConfig,
+	logger logging.Logger,
+	logIntegration *LogCollectionIntegration,
+) (workers.Worker, error) {
+
+	// Create the base worker first
+	baseWorker, err := createWorkerFromConfig(config, logger)
+	if err != nil {
+		return nil, err
+	}
+
+	// If log collection is not enabled, return the base worker
+	if !logIntegration.IsEnabled() {
+		return baseWorker, nil
+	}
+
+	// Enhance worker with log collection
+	enhancedWorker := &logCollectionEnabledWorker{
+		Worker:         baseWorker,
+		logIntegration: logIntegration,
+		workerConfig:   config,
+	}
+
+	logger.Infof("Worker %s created with log collection support", config.ID)
+	return enhancedWorker, nil
+}
+
+// logCollectionEnabledWorker wraps a worker to add log collection capabilities
+type logCollectionEnabledWorker struct {
+	workers.Worker
+	logIntegration *LogCollectionIntegration
+	workerConfig   WorkerConfig
+}
+
+// ProcessControlOptions enhances the base worker's process control options with log collection
+func (w *logCollectionEnabledWorker) ProcessControlOptions() processcontrol.ProcessControlOptions {
+	// Get base options from the wrapped worker
+	baseOptions := w.Worker.ProcessControlOptions()
+
+	// Add log collection service and config
+	baseOptions.LogCollectionService = w.logIntegration.GetLogCollectionService()
+	baseOptions.LogConfig = w.logIntegration.GetWorkerLogConfig(w.Worker.ID(), w.workerConfig)
+
+	return baseOptions
 }

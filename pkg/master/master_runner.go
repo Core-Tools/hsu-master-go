@@ -3,6 +3,11 @@ package master
 import (
 	"context"
 	"fmt"
+	"os"
+	"os/signal"
+	"runtime"
+	"sync"
+	"syscall"
 	"time"
 
 	coreLogging "github.com/core-tools/hsu-core/pkg/logging"
@@ -11,9 +16,27 @@ import (
 	"github.com/core-tools/hsu-master/pkg/workers"
 )
 
-// RunWithConfig runs the master with configuration loaded from a file
-// This is the main entry point for configuration-driven master execution
-func RunWithConfig(configFile string, coreLogger coreLogging.Logger, masterLogger logging.Logger) error {
+func Run(runDuration int, configFile string, enableLogCollection bool, coreLogger coreLogging.Logger, masterLogger logging.Logger) error {
+	masterLogger.Infof("Master runner starting...")
+
+	// Create context with run duration
+	ctx := context.Background()
+	if runDuration > 0 {
+		duration := time.Duration(runDuration) * time.Second
+		masterLogger.Infof("Using RUN DURATION of %d seconds", duration)
+		ctx, _ = context.WithTimeout(ctx, duration)
+	}
+
+	// Log configuration file
+	masterLogger.Infof("Using CONFIGURATION FILE: %s", configFile)
+
+	// Log log collection status
+	if enableLogCollection {
+		masterLogger.Infof("Log collection is ENABLED - worker logs will be collected!")
+	} else {
+		masterLogger.Infof("Log collection is DISABLED")
+	}
+
 	// Load configuration
 	config, err := LoadConfigFromFile(configFile)
 	if err != nil {
@@ -28,22 +51,31 @@ func RunWithConfig(configFile string, coreLogger coreLogging.Logger, masterLogge
 	masterLogger.Infof("Configuration loaded successfully from %s", configFile)
 	masterLogger.Infof("Master port: %d, Workers: %d", config.Master.Port, len(config.Workers))
 
-	// Run with the loaded configuration
-	return RunWithConfigStruct(config, coreLogger, masterLogger)
-}
+	var logIntegration *LogCollectionIntegration
+	if enableLogCollection {
+		// Create log collection integration
+		logIntegration, err = NewLogCollectionIntegration(config, masterLogger)
+		if err != nil {
+			return errors.NewInternalError("failed to create log collection integration", err)
+		}
 
-// RunWithConfigStruct runs the master with a configuration structure
-// This allows programmatic configuration for testing and embedding
-func RunWithConfigStruct(config *MasterConfig, coreLogger coreLogging.Logger, masterLogger logging.Logger) error {
-	if config == nil {
-		return errors.NewValidationError("configuration cannot be nil", nil)
+		// Start log collection service
+		if err := logIntegration.Start(ctx); err != nil {
+			return errors.NewInternalError("failed to start log collection", err)
+		}
+		defer logIntegration.Stop()
+
+		if logIntegration.IsEnabled() {
+			masterLogger.Infof("Log collection service started successfully")
+		} else {
+			masterLogger.Infof("Log collection is disabled")
+		}
 	}
-
-	masterLogger.Infof("Master runner starting...")
 
 	// Create master options from config
 	masterOptions := MasterOptions{
-		Port: config.Master.Port,
+		Port:                 config.Master.Port,
+		ForceShutdownTimeout: config.Master.ForceShutdownTimeout,
 	}
 
 	// Create master instance
@@ -52,26 +84,27 @@ func RunWithConfigStruct(config *MasterConfig, coreLogger coreLogging.Logger, ma
 		return errors.NewInternalError("failed to create master", err)
 	}
 
-	// Create workers from configuration
-	workers, err := CreateWorkersFromConfig(config, masterLogger)
-	if err != nil {
-		return errors.NewValidationError("failed to create workers from configuration", err)
+	var workers []workers.Worker
+	if logIntegration != nil {
+		// Set log collection service on master
+		if logIntegration.IsEnabled() {
+			master.SetLogCollectionService(logIntegration.GetLogCollectionService())
+		}
+
+		// Create workers from configuration with log collection support
+		workers, err = CreateWorkersFromConfigWithLogCollection(config, masterLogger, logIntegration)
+		if err != nil {
+			return errors.NewValidationError("failed to create workers from configuration with log collection support", err)
+		}
+	} else {
+		// Create workers from configuration
+		workers, err = CreateWorkersFromConfig(config, masterLogger)
+		if err != nil {
+			return errors.NewValidationError("failed to create workers from configuration", err)
+		}
 	}
 
-	masterLogger.Infof("Created %d workers from configuration", len(workers))
-
-	// Create application context
-	ctx := context.Background()
-
-	// Create a channel to signal when the master has stopped
-	stopped := make(chan struct{})
-
-	// Create master run options
-	masterRunOptions := RunOptions{
-		Context:               ctx,
-		ForcedShutdownTimeout: config.Master.ForceShutdownTimeout,
-		Stopped:               stopped,
-	}
+	masterLogger.Infof("Created %d workers", len(workers))
 
 	// Add all workers to master (registration phase)
 	for _, worker := range workers {
@@ -85,92 +118,67 @@ func RunWithConfigStruct(config *MasterConfig, coreLogger coreLogging.Logger, ma
 		masterLogger.Infof("Added worker: %s", worker.ID())
 	}
 
-	// Start master in background (master.Run blocks until shutdown)
-	masterLogger.Infof("Starting master server...")
-	go func() {
-		master.RunWithOptions(masterRunOptions)
-	}()
+	// Start master
+	master.Start(ctx)
 
-	// Wait for master to be running before starting workers
-	masterLogger.Infof("Waiting for master to be ready...")
-	for {
-		if master.GetMasterState() == MasterStateRunning {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
+	masterLogger.Infof("Enabling signal handling...")
+
+	// Enable signal handling
+	sig := make(chan os.Signal, 1)
+	if runtime.GOOS == "windows" {
+		signal.Notify(sig) // Unix signals not implemented on Windows
+	} else {
+		signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 	}
 
 	masterLogger.Infof("Master is ready, starting workers...")
 
-	// Start all workers (lifecycle phase)
-	for _, worker := range workers {
-		err := master.StartWorker(ctx, worker.ID())
-		if err != nil {
-			masterLogger.Errorf("Failed to start worker %s: %v", worker.ID(), err)
-			// Continue with other workers rather than failing completely
-			continue
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+
+		// Start all workers (lifecycle phase)
+		for _, worker := range workers {
+			err := master.StartWorker(ctx, worker.ID())
+			if err != nil {
+				masterLogger.Errorf("Failed to start worker %s: %v", worker.ID(), err)
+				// Continue with other workers rather than failing completely
+				continue
+			}
+			masterLogger.Infof("Started worker: %s", worker.ID())
 		}
-		masterLogger.Infof("Started worker: %s", worker.ID())
+
+		masterLogger.Infof("All workers started, master is fully operational")
+	}()
+
+	// Wait for graceful shutdown or timeout
+	select {
+	case receivedSignal := <-sig:
+		masterLogger.Infof("Master runner received signal: %v", receivedSignal)
+		if runtime.GOOS == "windows" {
+			if receivedSignal != os.Interrupt {
+				masterLogger.Errorf("Wrong signal received: got %q, want %q\n", receivedSignal, os.Interrupt)
+				os.Exit(42)
+			}
+		}
+	case <-ctx.Done():
+		masterLogger.Infof("Master runner timed out")
 	}
 
-	masterLogger.Infof("All workers started, master is fully operational")
+	masterLogger.Infof("Waiting for workers start to finish...")
 
-	// Wait for stop signal
-	<-stopped
+	// Wait for starting workers to finish
+	wg.Wait()
+
+	masterLogger.Infof("Ready to stop master...")
+
+	// Stop master
+	master.Stop(ctx)
 
 	masterLogger.Infof("Master runner stopped")
 
 	return nil
-}
-
-// RunWithConfigAndCustomLogger runs master with configuration and custom logger setup
-// This provides more control over logging configuration
-func RunWithConfigAndCustomLogger(
-	configFile string,
-	loggerFactory func(string) logging.Logger,
-	coreLoggerFactory func(string) coreLogging.Logger,
-) error {
-	// Create loggers using the provided factories
-	masterLogger := loggerFactory("hsu-master")
-	coreLogger := coreLoggerFactory("hsu-core")
-
-	return RunWithConfig(configFile, coreLogger, masterLogger)
-}
-
-// CreateMasterFromConfig creates a master instance from configuration without running it
-// This is useful for testing and more advanced use cases
-func CreateMasterFromConfig(
-	config *MasterConfig,
-	coreLogger coreLogging.Logger,
-	masterLogger logging.Logger,
-) (*Master, []workers.Worker, error) {
-	if config == nil {
-		return nil, nil, errors.NewValidationError("configuration cannot be nil", nil)
-	}
-
-	// Validate configuration
-	if err := ValidateConfig(config); err != nil {
-		return nil, nil, errors.NewValidationError("configuration validation failed", err)
-	}
-
-	// Create master options from config
-	masterOptions := MasterOptions{
-		Port: config.Master.Port,
-	}
-
-	// Create master instance
-	master, err := NewMaster(masterOptions, coreLogger, masterLogger)
-	if err != nil {
-		return nil, nil, errors.NewInternalError("failed to create master", err)
-	}
-
-	// Create workers from configuration
-	workers, err := CreateWorkersFromConfig(config, masterLogger)
-	if err != nil {
-		return nil, nil, errors.NewValidationError("failed to create workers from configuration", err)
-	}
-
-	return master, workers, nil
 }
 
 // ValidateConfigFile validates a configuration file without loading/running

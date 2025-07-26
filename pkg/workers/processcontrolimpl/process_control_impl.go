@@ -505,7 +505,7 @@ func (pc *processControl) terminateProcessExternal(ctx context.Context, proc *os
 	// Determine graceful timeout
 	gracefulTimeout := pc.config.GracefulTimeout
 	if gracefulTimeout <= 0 {
-		gracefulTimeout = 30 * time.Second // Timeout super-default
+		gracefulTimeout = 20 * time.Second // Timeout super-default
 	}
 
 	// Create a channel to signal when process exits
