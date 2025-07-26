@@ -116,9 +116,9 @@ type HealthRestartCallback func(reason string) error
 type HealthRecoveryCallback func()
 
 type HealthMonitor interface {
-	State() *HealthCheckState
-	Start()
+	Start(ctx context.Context) error
 	Stop()
+	State() *HealthCheckState
 	SetRestartCallback(callback HealthRestartCallback)   // Add restart callback
 	SetRecoveryCallback(callback HealthRecoveryCallback) // Add recovery callback
 }
@@ -142,30 +142,18 @@ type ProcessInfo struct {
 	PID int // Only PID is needed for process health checking
 }
 
-func NewHealthMonitor(config *HealthCheckConfig, id string, logger logging.Logger) (HealthMonitor, error) {
-	// Validate health check configuration
-	if err := ValidateHealthCheckConfig(*config); err != nil {
-		logger.Errorf("Health check configuration validation failed, id: %s, error: %v", id, err)
-		return nil, errors.NewValidationError("invalid health check configuration", err).WithContext("id", id)
-	}
-
+func NewHealthMonitor(config *HealthCheckConfig, id string, logger logging.Logger) HealthMonitor {
 	return &healthMonitor{
 		config:   config,
 		state:    &HealthCheckState{Status: HealthCheckStatusUnknown},
 		stopChan: make(chan struct{}),
 		logger:   logger,
 		id:       id,
-	}, nil
+	}
 }
 
 // NewHealthMonitorWithProcessInfo creates a health monitor with process information for process health checks
-func NewHealthMonitorWithProcessInfo(config *HealthCheckConfig, id string, processInfo *ProcessInfo, logger logging.Logger) (HealthMonitor, error) {
-	// Validate health check configuration
-	if err := ValidateHealthCheckConfig(*config); err != nil {
-		logger.Errorf("Health check configuration validation failed, id: %s, error: %v", id, err)
-		return nil, errors.NewValidationError("invalid health check configuration", err).WithContext("id", id)
-	}
-
+func NewHealthMonitorWithProcessInfo(config *HealthCheckConfig, id string, processInfo *ProcessInfo, logger logging.Logger) HealthMonitor {
 	return &healthMonitor{
 		config:      config,
 		state:       &HealthCheckState{Status: HealthCheckStatusUnknown},
@@ -173,17 +161,11 @@ func NewHealthMonitorWithProcessInfo(config *HealthCheckConfig, id string, proce
 		logger:      logger,
 		id:          id,
 		processInfo: processInfo,
-	}, nil
+	}
 }
 
 // NewHealthMonitorWithRestart creates a health monitor with restart capability
-func NewHealthMonitorWithRestart(config *HealthCheckConfig, id string, processInfo *ProcessInfo, restartPolicy *RestartConfig, logger logging.Logger) (HealthMonitor, error) {
-	// Validate health check configuration
-	if err := ValidateHealthCheckConfig(*config); err != nil {
-		logger.Errorf("Health check configuration validation failed, id: %s, error: %v", id, err)
-		return nil, errors.NewValidationError("invalid health check configuration", err).WithContext("id", id)
-	}
-
+func NewHealthMonitorWithRestart(config *HealthCheckConfig, id string, processInfo *ProcessInfo, restartPolicy *RestartConfig, logger logging.Logger) HealthMonitor {
 	return &healthMonitor{
 		config:        config,
 		state:         &HealthCheckState{Status: HealthCheckStatusUnknown},
@@ -192,7 +174,28 @@ func NewHealthMonitorWithRestart(config *HealthCheckConfig, id string, processIn
 		id:            id,
 		processInfo:   processInfo,
 		restartPolicy: restartPolicy,
-	}, nil
+	}
+}
+
+func (h *healthMonitor) Start(ctx context.Context) error {
+	h.logger.Infof("Starting health monitor, id: %s, type: %s, interval: %v", h.id, h.config.Type, h.config.RunOptions.Interval)
+
+	// Validate health check configuration
+	if err := ValidateHealthCheckConfig(*h.config); err != nil {
+		h.logger.Errorf("Health check configuration validation failed, id: %s, error: %v", h.id, err)
+		return errors.NewValidationError("invalid health check configuration", err).WithContext("id", h.id)
+	}
+
+	h.wg.Add(1)
+	go h.loop()
+	return nil
+}
+
+func (h *healthMonitor) Stop() {
+	h.logger.Infof("Stopping health monitor, id: %s", h.id)
+	close(h.stopChan)
+	h.wg.Wait()
+	h.logger.Infof("Health monitor stopped, id: %s", h.id)
 }
 
 func (h *healthMonitor) State() *HealthCheckState {
@@ -201,20 +204,6 @@ func (h *healthMonitor) State() *HealthCheckState {
 	// Return a copy to avoid race conditions
 	stateCopy := *h.state
 	return &stateCopy
-}
-
-func (h *healthMonitor) Start() {
-	h.logger.Infof("Starting health monitor, id: %s, type: %s, interval: %v", h.id, h.config.Type, h.config.RunOptions.Interval)
-
-	h.wg.Add(1)
-	go h.loop()
-}
-
-func (h *healthMonitor) Stop() {
-	h.logger.Infof("Stopping health monitor, id: %s", h.id)
-	close(h.stopChan)
-	h.wg.Wait()
-	h.logger.Infof("Health monitor stopped, id: %s", h.id)
 }
 
 func (h *healthMonitor) loop() {

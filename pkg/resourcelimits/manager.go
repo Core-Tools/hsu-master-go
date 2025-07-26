@@ -10,7 +10,7 @@ import (
 )
 
 // ResourceLimitManager coordinates resource monitoring and enforcement
-type ResourceLimitManager struct {
+type resourceLimitManager struct {
 	pid      int
 	limits   *ResourceLimits
 	monitor  ResourceMonitor
@@ -29,13 +29,16 @@ type ResourceLimitManager struct {
 
 	// Configuration
 	checkInterval time.Duration
+
+	// External violation handling
+	externalViolationCallback ResourceViolationCallback
 }
 
 // NewResourceLimitManager creates a new resource limit manager
-func NewResourceLimitManager(pid int, limits *ResourceLimits, logger logging.Logger) *ResourceLimitManager {
+func NewResourceLimitManager(pid int, limits *ResourceLimits, logger logging.Logger) ResourceLimitManager {
 	if limits == nil {
 		// Return manager with no limits
-		return &ResourceLimitManager{
+		return &resourceLimitManager{
 			pid:           pid,
 			logger:        logger,
 			checkInterval: 30 * time.Second,
@@ -45,10 +48,16 @@ func NewResourceLimitManager(pid int, limits *ResourceLimits, logger logging.Log
 	// Create monitoring config if not provided
 	if limits.Monitoring == nil {
 		limits.Monitoring = &ResourceMonitoringConfig{
-			Enabled:          true,
-			Interval:         30 * time.Second,
-			HistoryRetention: 24 * time.Hour,
-			AlertingEnabled:  true,
+			Enabled:           true,
+			Interval:          30 * time.Second,
+			HistoryRetention:  24 * time.Hour,
+			AlertingEnabled:   true,
+			ViolationHandling: ViolationHandlingInternal, // Default for backward compatibility
+		}
+	} else {
+		// Set default violation handling mode if not specified
+		if limits.Monitoring.ViolationHandling == "" {
+			limits.Monitoring.ViolationHandling = ViolationHandlingInternal
 		}
 	}
 
@@ -61,7 +70,7 @@ func NewResourceLimitManager(pid int, limits *ResourceLimits, logger logging.Log
 	monitor := NewResourceMonitor(pid, limits.Monitoring, logger)
 	enforcer := NewResourceEnforcer(logger)
 
-	return &ResourceLimitManager{
+	return &resourceLimitManager{
 		pid:           pid,
 		limits:        limits,
 		monitor:       monitor,
@@ -73,7 +82,7 @@ func NewResourceLimitManager(pid int, limits *ResourceLimits, logger logging.Log
 }
 
 // Start begins resource monitoring and enforcement
-func (rlm *ResourceLimitManager) Start(ctx context.Context) error {
+func (rlm *resourceLimitManager) Start(ctx context.Context) error {
 	rlm.mutex.Lock()
 	defer rlm.mutex.Unlock()
 
@@ -106,7 +115,7 @@ func (rlm *ResourceLimitManager) Start(ctx context.Context) error {
 
 		// Set up monitoring callbacks
 		rlm.monitor.SetUsageCallback(rlm.onUsageUpdate)
-		rlm.monitor.SetViolationCallback(rlm.onViolation)
+		rlm.monitor.SetViolationCallback(rlm.onViolationDispatch)
 
 		// Start violation checking loop
 		rlm.wg.Add(1)
@@ -118,7 +127,7 @@ func (rlm *ResourceLimitManager) Start(ctx context.Context) error {
 }
 
 // Stop stops resource monitoring and enforcement
-func (rlm *ResourceLimitManager) Stop() {
+func (rlm *resourceLimitManager) Stop() {
 	rlm.mutex.Lock()
 	defer rlm.mutex.Unlock()
 
@@ -143,7 +152,7 @@ func (rlm *ResourceLimitManager) Stop() {
 }
 
 // GetCurrentUsage returns current resource usage
-func (rlm *ResourceLimitManager) GetCurrentUsage() (*ResourceUsage, error) {
+func (rlm *resourceLimitManager) GetCurrentUsage() (*ResourceUsage, error) {
 	if rlm.monitor == nil {
 		return nil, fmt.Errorf("resource monitoring not available")
 	}
@@ -152,7 +161,7 @@ func (rlm *ResourceLimitManager) GetCurrentUsage() (*ResourceUsage, error) {
 }
 
 // GetViolations returns recent resource violations
-func (rlm *ResourceLimitManager) GetViolations() []*ResourceViolation {
+func (rlm *resourceLimitManager) GetViolations() []*ResourceViolation {
 	rlm.mutex.RLock()
 	defer rlm.mutex.RUnlock()
 
@@ -163,17 +172,44 @@ func (rlm *ResourceLimitManager) GetViolations() []*ResourceViolation {
 }
 
 // GetLimits returns the current resource limits
-func (rlm *ResourceLimitManager) GetLimits() *ResourceLimits {
+func (rlm *resourceLimitManager) GetLimits() *ResourceLimits {
 	return rlm.limits
 }
 
 // IsMonitoringEnabled returns true if resource monitoring is enabled
-func (rlm *ResourceLimitManager) IsMonitoringEnabled() bool {
+func (rlm *resourceLimitManager) IsMonitoringEnabled() bool {
 	return rlm.limits != nil && rlm.limits.Monitoring != nil && rlm.limits.Monitoring.Enabled
 }
 
+// SetViolationCallback sets an external callback for handling resource violations
+// This is only effective when ViolationHandling mode is set to External
+func (rlm *resourceLimitManager) SetViolationCallback(callback ResourceViolationCallback) {
+	rlm.mutex.Lock()
+	defer rlm.mutex.Unlock()
+	rlm.externalViolationCallback = callback
+
+	// Also set the callback on the monitor for immediate violation detection
+	if rlm.monitor != nil {
+		rlm.monitor.SetViolationCallback(rlm.onViolationDispatch)
+	}
+}
+
+// GetViolationHandlingMode returns the current violation handling mode
+func (rlm *resourceLimitManager) GetViolationHandlingMode() ViolationHandlingMode {
+	if rlm.limits == nil || rlm.limits.Monitoring == nil {
+		return ViolationHandlingInternal // Default
+	}
+
+	mode := rlm.limits.Monitoring.ViolationHandling
+	if mode == "" {
+		return ViolationHandlingInternal // Default for backward compatibility
+	}
+
+	return mode
+}
+
 // onUsageUpdate handles resource usage updates
-func (rlm *ResourceLimitManager) onUsageUpdate(usage *ResourceUsage) {
+func (rlm *resourceLimitManager) onUsageUpdate(usage *ResourceUsage) {
 	rlm.logger.Debugf("Resource usage update for PID %d: Memory RSS: %dMB, CPU: %.1f%%",
 		rlm.pid, usage.MemoryRSS/(1024*1024), usage.CPUPercent)
 
@@ -181,8 +217,40 @@ func (rlm *ResourceLimitManager) onUsageUpdate(usage *ResourceUsage) {
 	// For example, trend analysis, alerting thresholds, etc.
 }
 
-// onViolation handles resource limit violations
-func (rlm *ResourceLimitManager) onViolation(violation *ResourceViolation) {
+// onViolationDispatch routes violations based on the violation handling mode
+func (rlm *resourceLimitManager) onViolationDispatch(violation *ResourceViolation) {
+	mode := rlm.GetViolationHandlingMode()
+
+	switch mode {
+	case ViolationHandlingExternal:
+		// Delegate to external callback (e.g., ProcessControl)
+		rlm.mutex.RLock()
+		callback := rlm.externalViolationCallback
+		rlm.mutex.RUnlock()
+
+		if callback != nil {
+			rlm.logger.Debugf("Delegating violation to external handler for PID %d: %s", rlm.pid, violation.Message)
+			callback(violation)
+		} else {
+			rlm.logger.Warnf("External violation handling mode enabled but no callback set for PID %d", rlm.pid)
+		}
+
+	case ViolationHandlingInternal:
+		// Use internal violation handling (existing behavior)
+		rlm.onViolation(violation)
+
+	case ViolationHandlingDisabled:
+		// Only log the violation, no enforcement
+		rlm.logger.Infof("Resource violation detected (handling disabled) for PID %d: %s", rlm.pid, violation.Message)
+
+	default:
+		rlm.logger.Warnf("Unknown violation handling mode: %s, falling back to internal handling", mode)
+		rlm.onViolation(violation)
+	}
+}
+
+// onViolation handles resource limit violations (internal mode)
+func (rlm *resourceLimitManager) onViolation(violation *ResourceViolation) {
 	rlm.mutex.Lock()
 	rlm.violations = append(rlm.violations, violation)
 
@@ -201,7 +269,7 @@ func (rlm *ResourceLimitManager) onViolation(violation *ResourceViolation) {
 }
 
 // handleCriticalViolation handles critical resource violations
-func (rlm *ResourceLimitManager) handleCriticalViolation(violation *ResourceViolation) {
+func (rlm *resourceLimitManager) handleCriticalViolation(violation *ResourceViolation) {
 	rlm.logger.Errorf("Handling critical resource violation for PID %d: %s", rlm.pid, violation.Message)
 
 	// Execute enforcement policy
@@ -211,7 +279,7 @@ func (rlm *ResourceLimitManager) handleCriticalViolation(violation *ResourceViol
 }
 
 // violationCheckLoop periodically checks for resource violations
-func (rlm *ResourceLimitManager) violationCheckLoop() {
+func (rlm *resourceLimitManager) violationCheckLoop() {
 	defer rlm.wg.Done()
 
 	// Use a shorter interval for violation checking than general monitoring
@@ -236,7 +304,7 @@ func (rlm *ResourceLimitManager) violationCheckLoop() {
 }
 
 // checkViolations checks for resource limit violations
-func (rlm *ResourceLimitManager) checkViolations() {
+func (rlm *resourceLimitManager) checkViolations() {
 	if rlm.monitor == nil || rlm.limits == nil {
 		return
 	}
@@ -261,7 +329,7 @@ func (rlm *ResourceLimitManager) checkViolations() {
 }
 
 // GetSupportedLimitTypes returns the resource limit types supported on this platform
-func (rlm *ResourceLimitManager) GetSupportedLimitTypes() []ResourceLimitType {
+func (rlm *resourceLimitManager) GetSupportedLimitTypes() []ResourceLimitType {
 	var supportedTypes []ResourceLimitType
 
 	allTypes := []ResourceLimitType{

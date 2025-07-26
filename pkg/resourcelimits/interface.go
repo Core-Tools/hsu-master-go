@@ -5,6 +5,33 @@ import (
 	"time"
 )
 
+// ResourceLimitManager provides a unified interface for managing resource limits
+type ResourceLimitManager interface {
+	// Start begins resource limit management
+	Start(ctx context.Context) error
+
+	// Stop stops resource limit management
+	Stop()
+
+	// GetLimits returns current resource limits
+	GetLimits() *ResourceLimits
+
+	// GetCurrentUsage returns current resource usage
+	GetCurrentUsage() (*ResourceUsage, error)
+
+	// GetViolations returns current resource violations
+	GetViolations() []*ResourceViolation
+
+	// IsMonitoringEnabled returns true if monitoring is enabled
+	IsMonitoringEnabled() bool
+
+	// GetViolationHandlingMode returns the current violation handling mode
+	GetViolationHandlingMode() ViolationHandlingMode
+
+	// SetViolationCallback sets callback for limit violations
+	SetViolationCallback(callback ResourceViolationCallback)
+}
+
 // ResourceMonitor provides real-time resource usage monitoring
 type ResourceMonitor interface {
 	// GetCurrentUsage returns current resource usage
@@ -182,7 +209,26 @@ type ResourceMonitoringConfig struct {
 	Interval         time.Duration `yaml:"interval,omitempty"`          // Monitoring interval
 	HistoryRetention time.Duration `yaml:"history_retention,omitempty"` // How long to keep history
 	AlertingEnabled  bool          `yaml:"alerting_enabled,omitempty"`  // Enable alerting
+
+	// Violation handling configuration
+	ViolationHandling ViolationHandlingMode `yaml:"violation_handling,omitempty"` // How to handle violations
 }
+
+// ViolationHandlingMode defines how resource violations are handled
+type ViolationHandlingMode string
+
+const (
+	// ViolationHandlingInternal uses the built-in resourceEnforcer for violation handling
+	// This is the default mode for backward compatibility
+	ViolationHandlingInternal ViolationHandlingMode = "internal"
+
+	// ViolationHandlingExternal delegates violation handling to external callbacks
+	// This mode is used when external systems (like ProcessControl) want to handle violations
+	ViolationHandlingExternal ViolationHandlingMode = "external"
+
+	// ViolationHandlingDisabled disables violation handling entirely (monitoring only)
+	ViolationHandlingDisabled ViolationHandlingMode = "disabled"
+)
 
 // Callback types
 type ResourceUsageCallback func(usage *ResourceUsage)

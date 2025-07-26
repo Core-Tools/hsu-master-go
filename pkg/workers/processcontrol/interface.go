@@ -14,9 +14,6 @@ import (
 
 // ProcessControl interface defines the contract for process control operations
 type ProcessControl interface {
-	Process() *os.Process
-	HealthMonitor() monitoring.HealthMonitor
-	Stdout() io.ReadCloser
 	Start(ctx context.Context) error
 	Stop(ctx context.Context) error
 	Restart(ctx context.Context) error

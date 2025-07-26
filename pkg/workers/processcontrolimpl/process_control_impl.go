@@ -11,16 +11,22 @@ import (
 	"github.com/core-tools/hsu-master/pkg/logging"
 	"github.com/core-tools/hsu-master/pkg/monitoring"
 	"github.com/core-tools/hsu-master/pkg/process"
+	"github.com/core-tools/hsu-master/pkg/resourcelimits"
 	"github.com/core-tools/hsu-master/pkg/workers/processcontrol"
 )
 
 type processControl struct {
-	config        processcontrol.ProcessControlOptions
-	process       *os.Process
-	stdout        io.ReadCloser
+	config   processcontrol.ProcessControlOptions
+	process  *os.Process
+	stdout   io.ReadCloser
+	logger   logging.Logger
+	workerID string
+
+	// Health monitor
 	healthMonitor monitoring.HealthMonitor
-	logger        logging.Logger
-	workerID      string
+
+	// Resource limit management
+	resourceManager resourcelimits.ResourceLimitManager
 
 	// Persistent restart tracking (survives health monitor recreation)
 	restartCircuitBreaker RestartCircuitBreaker
@@ -39,18 +45,6 @@ func NewProcessControl(config processcontrol.ProcessControlOptions, workerID str
 		workerID:              workerID,
 		restartCircuitBreaker: restartCircuitBreaker,
 	}
-}
-
-func (pc *processControl) Process() *os.Process {
-	return pc.process // Simplified to only return process
-}
-
-func (pc *processControl) HealthMonitor() monitoring.HealthMonitor {
-	return pc.healthMonitor
-}
-
-func (pc *processControl) Stdout() io.ReadCloser {
-	return pc.stdout
 }
 
 func (pc *processControl) Start(ctx context.Context) error {
@@ -99,13 +93,22 @@ func (pc *processControl) startInternal(ctx context.Context) error {
 	pc.process = process
 	pc.stdout = stdout
 
-	healthMonitor, err := pc.startHealthCheck(process.Pid, healthCheckConfig)
+	healthMonitor, err := pc.startHealthCheck(ctx, process.Pid, healthCheckConfig)
 	if err != nil {
 		pc.logger.Warnf("Failed to start health monitor, worker: %s, error: %v", pc.workerID, err)
 		// ignore health monitor error
 	}
 
 	pc.healthMonitor = healthMonitor
+
+	// Initialize resource monitoring if limits are specified
+	resourceManager, err := pc.startResourceMonitoring(ctx, process.Pid)
+	if err != nil {
+		pc.logger.Warnf("Failed to initialize resource monitoring for worker %s: %v", pc.workerID, err)
+		// Don't fail process start due to monitoring issues
+	}
+
+	pc.resourceManager = resourceManager
 
 	pc.logger.Infof("Process control started, worker: %s", pc.workerID)
 
@@ -167,7 +170,7 @@ func (pc *processControl) startProcess(ctx context.Context) (*os.Process, io.Rea
 	return process, stdout, healthCheckConfig, nil
 }
 
-func (pc *processControl) startHealthCheck(pid int, healthCheckConfig *monitoring.HealthCheckConfig) (monitoring.HealthMonitor, error) {
+func (pc *processControl) startHealthCheck(ctx context.Context, pid int, healthCheckConfig *monitoring.HealthCheckConfig) (monitoring.HealthMonitor, error) {
 	pc.logger.Infof("Starting health monitor for worker %s, config: %+v", pc.workerID, healthCheckConfig)
 
 	if healthCheckConfig == nil {
@@ -176,7 +179,6 @@ func (pc *processControl) startHealthCheck(pid int, healthCheckConfig *monitorin
 	}
 
 	var healthMonitor monitoring.HealthMonitor
-	var err error
 
 	// Create process info for health monitoring - simplified
 	processInfo := &monitoring.ProcessInfo{
@@ -187,27 +189,23 @@ func (pc *processControl) startHealthCheck(pid int, healthCheckConfig *monitorin
 	if healthCheckConfig.Type == monitoring.HealthCheckTypeProcess {
 		if pc.config.Restart != nil && pc.config.CanRestart {
 			// Create health monitor with restart capability
-			healthMonitor, err = monitoring.NewHealthMonitorWithRestart(healthCheckConfig,
+			healthMonitor = monitoring.NewHealthMonitorWithRestart(healthCheckConfig,
 				pc.workerID, processInfo, pc.config.Restart, pc.logger)
 		} else {
 			// Create health monitor with process info but no restart
-			healthMonitor, err = monitoring.NewHealthMonitorWithProcessInfo(healthCheckConfig,
+			healthMonitor = monitoring.NewHealthMonitorWithProcessInfo(healthCheckConfig,
 				pc.workerID, processInfo, pc.logger)
 		}
 	} else {
 		// For other health check types, create standard monitor
-		healthMonitor, err = monitoring.NewHealthMonitor(healthCheckConfig, pc.workerID, pc.logger)
-	}
-
-	if err != nil {
-		pc.logger.Errorf("Failed to create health monitor, worker: %s, error: %v", pc.workerID, err)
-		return nil, errors.NewInternalError("failed to create health monitor", err).WithContext("id", pc.workerID)
+		healthMonitor = monitoring.NewHealthMonitor(healthCheckConfig, pc.workerID, pc.logger)
 	}
 
 	// Set up restart callback if restart is enabled
 	if pc.restartCircuitBreaker != nil {
 		healthMonitor.SetRestartCallback(func(reason string) error {
 			pc.logger.Warnf("Restart requested, worker: %s, reason: %s", pc.workerID, reason)
+			// Already async context in health monitor callback - no goroutine
 			wrappedRestart := func() error {
 				// Use a background context for restart since this is triggered by health failure
 				ctx := context.Background()
@@ -223,24 +221,154 @@ func (pc *processControl) startHealthCheck(pid int, healthCheckConfig *monitorin
 		})
 	}
 
-	healthMonitor.Start()
+	err := healthMonitor.Start(ctx)
+	if err != nil {
+		return nil, errors.NewInternalError("failed to start health monitoring", err).WithContext("id", pc.workerID)
+	}
 
 	pc.logger.Infof("Health monitor started, worker: %s", pc.workerID)
 
 	return healthMonitor, nil
 }
 
+// Initialize resource monitoring (internal - no validation)
+func (pc *processControl) startResourceMonitoring(ctx context.Context, pid int) (resourcelimits.ResourceLimitManager, error) {
+	if pc.config.Limits == nil {
+		return nil, errors.NewInternalError("no limits specified", nil).WithContext("id", pc.workerID)
+	}
+
+	pc.logger.Debugf("Initializing resource monitoring for worker %s, PID: %d", pc.workerID, pid)
+
+	// Configure limits for external violation handling
+	limits := pc.config.Limits
+	if limits.Monitoring == nil {
+		limits.Monitoring = &resourcelimits.ResourceMonitoringConfig{
+			Enabled:           true,
+			Interval:          30 * time.Second,
+			HistoryRetention:  24 * time.Hour,
+			AlertingEnabled:   true,
+			ViolationHandling: resourcelimits.ViolationHandlingExternal, // Use external handling for ProcessControl integration
+		}
+	} else {
+		// Override violation handling mode to external for ProcessControl integration
+		limits.Monitoring.ViolationHandling = resourcelimits.ViolationHandlingExternal
+	}
+
+	// Create resource limit manager
+	resourceManager := resourcelimits.NewResourceLimitManager(
+		pc.process.Pid,
+		limits,
+		pc.logger,
+	)
+
+	// Set violation callback to integrate with ProcessControl restart logic
+	resourceManager.SetViolationCallback(pc.handleResourceViolation)
+
+	// Start monitoring
+	err := pc.resourceManager.Start(ctx)
+	if err != nil {
+		return nil, errors.NewInternalError("failed to start resource monitoring", err).WithContext("id", pc.workerID)
+	}
+
+	pc.logger.Infof("Resource monitoring started for worker %s, PID: %d", pc.workerID, pc.process.Pid)
+	return resourceManager, nil
+}
+
+// Handle resource violations by integrating with existing restart logic (internal)
+func (pc *processControl) handleResourceViolation(violation *resourcelimits.ResourceViolation) {
+	pc.logger.Warnf("Resource violation detected for worker %s: %s", pc.workerID, violation.Message)
+
+	// Handle different violation policies
+	switch violation.LimitType {
+	case resourcelimits.ResourceLimitTypeMemory:
+		if pc.config.Limits.Memory != nil {
+			pc.executeViolationPolicy(pc.config.Limits.Memory.Policy, violation)
+		}
+	case resourcelimits.ResourceLimitTypeCPU:
+		if pc.config.Limits.CPU != nil {
+			pc.executeViolationPolicy(pc.config.Limits.CPU.Policy, violation)
+		}
+	case resourcelimits.ResourceLimitTypeProcess:
+		if pc.config.Limits.Process != nil {
+			pc.executeViolationPolicy(pc.config.Limits.Process.Policy, violation)
+		}
+	default:
+		pc.logger.Warnf("Unknown resource violation type: %s", violation.LimitType)
+	}
+}
+
+// Execute violation policy actions (internal)
+func (pc *processControl) executeViolationPolicy(policy resourcelimits.ResourcePolicy, violation *resourcelimits.ResourceViolation) {
+	switch policy {
+	case resourcelimits.ResourcePolicyLog:
+		pc.logger.Warnf("Resource limit exceeded (policy: log): %s", violation.Message)
+
+	case resourcelimits.ResourcePolicyAlert:
+		pc.logger.Errorf("ALERT: Resource limit exceeded: %s", violation.Message)
+		// TODO: Integrate with alerting system when available
+
+	case resourcelimits.ResourcePolicyRestart:
+		pc.logger.Errorf("Resource limit exceeded, restarting process (policy: restart): %s", violation.Message)
+		// Use goroutine to avoid blocking resource monitoring, but use circuit breaker for consistency
+		go func() {
+			if pc.restartCircuitBreaker != nil {
+				// Use circuit breaker for consistent restart logic and protection against loops
+				wrappedRestart := func() error {
+					ctx := context.Background()
+					return pc.restartInternal(ctx)
+				}
+				if err := pc.restartCircuitBreaker.ExecuteRestart(wrappedRestart); err != nil {
+					pc.logger.Errorf("Failed to restart process after resource violation (circuit breaker): %v", err)
+				}
+			} else {
+				// Fallback if no circuit breaker (shouldn't happen in normal operation)
+				ctx := context.Background()
+				if err := pc.restartInternal(ctx); err != nil {
+					pc.logger.Errorf("Failed to restart process after resource violation: %v", err)
+				}
+			}
+		}()
+
+	case resourcelimits.ResourcePolicyGracefulShutdown:
+		pc.logger.Errorf("Resource limit exceeded, performing graceful shutdown (policy: graceful_shutdown): %s", violation.Message)
+		// Async to avoid blocking monitoring, but graceful shutdown doesn't need circuit breaker
+		go func() {
+			ctx := context.Background()
+			if err := pc.stopInternal(ctx, false); err != nil {
+				pc.logger.Errorf("Failed to stop process after resource violation: %v", err)
+			}
+		}()
+
+	case resourcelimits.ResourcePolicyImmediateKill:
+		pc.logger.Errorf("Resource limit exceeded, killing process immediately (policy: immediate_kill): %s", violation.Message)
+		// Synchronous - Kill() is fast and immediate
+		if pc.process != nil {
+			pc.process.Kill()
+		}
+
+	default:
+		pc.logger.Warnf("Unknown resource policy: %s", policy)
+	}
+}
+
 func (pc *processControl) stopInternal(ctx context.Context, idDeadPID bool) error {
 	pc.logger.Infof("Stopping process control...")
 
-	// 1. Stop health monitor first
+	// 1. Stop resource monitoring first
+	if pc.resourceManager != nil {
+		pc.resourceManager.Stop()
+		pc.resourceManager = nil
+		pc.logger.Debugf("Resource monitoring stopped for worker %s", pc.workerID)
+	}
+
+	// 2. Stop health monitor
 	if pc.healthMonitor != nil {
 		pc.logger.Infof("Stopping health monitor...")
 		pc.healthMonitor.Stop()
 		pc.healthMonitor = nil
 	}
 
-	// 2. Close stdout reader to prevent resource leaks
+	// 3. Close stdout reader to prevent resource leaks
 	if pc.stdout != nil {
 		pc.logger.Infof("Closing stdout reader...")
 		if err := pc.stdout.Close(); err != nil {
@@ -249,13 +377,13 @@ func (pc *processControl) stopInternal(ctx context.Context, idDeadPID bool) erro
 		pc.stdout = nil
 	}
 
-	// 3. Terminate the process gracefully with context
+	// 4. Terminate the process gracefully with context
 	if err := pc.terminateProcess(ctx, idDeadPID); err != nil {
 		pc.logger.Errorf("Failed to terminate process: %v", err)
 		return errors.NewProcessError("failed to terminate process", err)
 	}
 
-	// 4. Clean up process references
+	// 5. Clean up process references
 	pc.process = nil
 
 	pc.logger.Infof("Process control stopped successfully")
