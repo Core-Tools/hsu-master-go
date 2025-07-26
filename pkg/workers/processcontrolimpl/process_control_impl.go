@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/core-tools/hsu-master/pkg/errors"
@@ -13,6 +14,17 @@ import (
 	"github.com/core-tools/hsu-master/pkg/process"
 	"github.com/core-tools/hsu-master/pkg/resourcelimits"
 	"github.com/core-tools/hsu-master/pkg/workers/processcontrol"
+)
+
+// ProcessState represents the current lifecycle state of the process control
+type ProcessState string
+
+const (
+	ProcessStateIdle        ProcessState = "idle"        // No process, ready to start
+	ProcessStateStarting    ProcessState = "starting"    // Process startup in progress
+	ProcessStateRunning     ProcessState = "running"     // Process running normally
+	ProcessStateStopping    ProcessState = "stopping"    // Graceful shutdown initiated
+	ProcessStateTerminating ProcessState = "terminating" // Force termination in progress
 )
 
 type processControl struct {
@@ -30,6 +42,12 @@ type processControl struct {
 
 	// Persistent restart tracking (survives health monitor recreation)
 	restartCircuitBreaker RestartCircuitBreaker
+
+	// Process lifecycle state management
+	state ProcessState
+
+	// Mutex to protect concurrent access to fields
+	mutex sync.RWMutex
 }
 
 func NewProcessControl(config processcontrol.ProcessControlOptions, workerID string, logger logging.Logger) processcontrol.ProcessControl {
@@ -44,6 +62,7 @@ func NewProcessControl(config processcontrol.ProcessControlOptions, workerID str
 		logger:                logger,
 		workerID:              workerID,
 		restartCircuitBreaker: restartCircuitBreaker,
+		state:                 ProcessStateIdle, // ✅ Initialize to idle state
 	}
 }
 
@@ -82,11 +101,33 @@ func (pc *processControl) Restart(ctx context.Context) error {
 	return pc.restartInternal(ctx)
 }
 
+// GetState returns the current process state (for monitoring/debugging)
+func (pc *processControl) GetState() ProcessState {
+	pc.mutex.RLock()
+	defer pc.mutex.RUnlock()
+	return pc.state
+}
+
 func (pc *processControl) startInternal(ctx context.Context) error {
 	pc.logger.Infof("Starting process control for worker %s", pc.workerID)
 
+	// Acquire exclusive lock for field modifications
+	pc.mutex.Lock()
+	defer pc.mutex.Unlock()
+
+	// ✅ CRITICAL: Validate state transition before proceeding
+	if !pc.canStartFromState(pc.state) {
+		return errors.NewValidationError(
+			fmt.Sprintf("cannot start process in state '%s': operation not allowed", pc.state),
+			nil).WithContext("worker", pc.workerID).WithContext("current_state", string(pc.state))
+	}
+
+	// Set state to starting to prevent concurrent operations
+	pc.state = ProcessStateStarting
+
 	process, stdout, healthCheckConfig, err := pc.startProcess(ctx)
 	if err != nil {
+		pc.state = ProcessStateIdle // ✅ Reset state on failure
 		return errors.NewInternalError("failed to start process", err)
 	}
 
@@ -110,9 +151,30 @@ func (pc *processControl) startInternal(ctx context.Context) error {
 
 	pc.resourceManager = resourceManager
 
+	// ✅ Process successfully started and running
+	pc.state = ProcessStateRunning
+
 	pc.logger.Infof("Process control started, worker: %s", pc.workerID)
 
 	return nil
+}
+
+// canStartFromState validates if starting is allowed from the current state
+func (pc *processControl) canStartFromState(currentState ProcessState) bool {
+	switch currentState {
+	case ProcessStateIdle:
+		return true // ✅ Can start from idle
+	case ProcessStateStarting:
+		return false // ❌ Already starting
+	case ProcessStateRunning:
+		return false // ❌ Already running
+	case ProcessStateStopping:
+		return false // ❌ Still stopping, wait for completion
+	case ProcessStateTerminating:
+		return false // ❌ Still terminating, wait for completion
+	default:
+		return false // ❌ Unknown state
+	}
 }
 
 func (pc *processControl) startProcess(ctx context.Context) (*os.Process, io.ReadCloser, *monitoring.HealthCheckConfig, error) {
@@ -331,19 +393,20 @@ func (pc *processControl) executeViolationPolicy(policy resourcelimits.ResourceP
 
 	case resourcelimits.ResourcePolicyGracefulShutdown:
 		pc.logger.Errorf("Resource limit exceeded, performing graceful shutdown (policy: graceful_shutdown): %s", violation.Message)
-		// Async to avoid blocking monitoring, but graceful shutdown doesn't need circuit breaker
+		// ✅ SIMPLIFIED: Use unified termination method with graceful policy
 		go func() {
 			ctx := context.Background()
-			if err := pc.stopInternal(ctx, false); err != nil {
-				pc.logger.Errorf("Failed to stop process after resource violation: %v", err)
+			if err := pc.terminateProcessWithPolicy(ctx, resourcelimits.ResourcePolicyGracefulShutdown, violation.Message); err != nil {
+				pc.logger.Errorf("Failed to gracefully shutdown process after resource violation: %v", err)
 			}
 		}()
 
 	case resourcelimits.ResourcePolicyImmediateKill:
 		pc.logger.Errorf("Resource limit exceeded, killing process immediately (policy: immediate_kill): %s", violation.Message)
-		// Synchronous - Kill() is fast and immediate
-		if pc.process != nil {
-			pc.process.Kill()
+		// ✅ SIMPLIFIED: Use unified termination method with kill policy (synchronous for immediate response)
+		ctx := context.Background()
+		if err := pc.terminateProcessWithPolicy(ctx, resourcelimits.ResourcePolicyImmediateKill, violation.Message); err != nil {
+			pc.logger.Errorf("Failed to kill process after resource violation: %v", err)
 		}
 
 	default:
@@ -354,69 +417,111 @@ func (pc *processControl) executeViolationPolicy(policy resourcelimits.ResourceP
 func (pc *processControl) stopInternal(ctx context.Context, idDeadPID bool) error {
 	pc.logger.Infof("Stopping process control...")
 
-	// 1. Stop resource monitoring first
-	if pc.resourceManager != nil {
-		pc.resourceManager.Stop()
-		pc.resourceManager = nil
-		pc.logger.Debugf("Resource monitoring stopped for worker %s", pc.workerID)
+	// Phase 1: Quick state validation and transition under lock
+	var processToTerminate *os.Process
+
+	pc.mutex.Lock()
+
+	// ✅ CRITICAL: Validate state transition before proceeding
+	if !pc.canStopFromState(pc.state) {
+		currentState := pc.state
+		pc.mutex.Unlock()
+		return errors.NewValidationError(
+			fmt.Sprintf("cannot stop process in state '%s': operation not allowed", currentState),
+			nil).WithContext("worker", pc.workerID).WithContext("current_state", string(currentState))
 	}
 
-	// 2. Stop health monitor
-	if pc.healthMonitor != nil {
-		pc.logger.Infof("Stopping health monitor...")
-		pc.healthMonitor.Stop()
-		pc.healthMonitor = nil
+	// Fast-path: already stopped
+	if pc.state == ProcessStateIdle {
+		pc.mutex.Unlock()
+		pc.logger.Infof("Process already stopped, worker: %s", pc.workerID)
+		return nil
 	}
 
-	// 3. Close stdout reader to prevent resource leaks
-	if pc.stdout != nil {
-		pc.logger.Infof("Closing stdout reader...")
-		if err := pc.stdout.Close(); err != nil {
-			pc.logger.Warnf("Failed to close stdout: %v", err)
+	// Set stopping state immediately to block new operations
+	pc.state = ProcessStateStopping
+	pc.logger.Debugf("State transition: %s -> stopping, worker: %s", pc.state, pc.workerID)
+
+	// Get process reference for termination
+	processToTerminate = pc.process
+	pc.process = nil // Clear reference immediately
+
+	pc.mutex.Unlock()
+
+	// Phase 2: Termination outside lock (reuse the existing logic)
+	var terminationError error
+	if processToTerminate != nil {
+		if err := pc.terminateProcessExternal(ctx, processToTerminate, idDeadPID); err != nil {
+			pc.logger.Errorf("Failed to terminate process: %v", err)
+			terminationError = errors.NewProcessError("failed to terminate process", err)
 		}
-		pc.stdout = nil
 	}
 
-	// 4. Terminate the process gracefully with context
-	if err := pc.terminateProcess(ctx, idDeadPID); err != nil {
-		pc.logger.Errorf("Failed to terminate process: %v", err)
-		return errors.NewProcessError("failed to terminate process", err)
-	}
+	// Phase 3: Final cleanup and state transition
+	pc.mutex.Lock()
 
-	// 5. Clean up process references
-	pc.process = nil
+	// ✅ SIMPLIFIED: Use shared cleanup logic
+	pc.cleanupResourcesUnderLock()
+
+	pc.state = ProcessStateIdle // ✅ Now safe for new starts
+	pc.logger.Debugf("State transition: stopping -> idle, worker: %s", pc.workerID)
+	pc.mutex.Unlock()
+
+	if terminationError != nil {
+		return terminationError
+	}
 
 	pc.logger.Infof("Process control stopped successfully")
 	return nil
+}
+
+// canStopFromState validates if stopping is allowed from the current state
+func (pc *processControl) canStopFromState(currentState ProcessState) bool {
+	switch currentState {
+	case ProcessStateIdle:
+		return true // ✅ Can stop from idle (no-op)
+	case ProcessStateStarting:
+		return false // ❌ Wait for startup to complete
+	case ProcessStateRunning:
+		return true // ✅ Can stop from running
+	case ProcessStateStopping:
+		return false // ❌ Already stopping
+	case ProcessStateTerminating:
+		return false // ❌ Already terminating
+	default:
+		return false // ❌ Unknown state
+	}
 }
 
 // restartInternal performs the actual restart without additional validation
 func (pc *processControl) restartInternal(ctx context.Context) error {
 	pc.logger.Infof("Restarting process control...")
 
-	// 1. Stop the current process
+	// 1. Stop the current process (with state validation)
 	if err := pc.stopInternal(ctx, true); err != nil {
 		pc.logger.Errorf("Failed to stop process during restart: %v", err)
 		return fmt.Errorf("failed to stop process during restart: %v", err)
 	}
 
-	// 2. Start the process again
+	// 2. Start the process again (with state validation)
+	// Note: stopInternal() sets state to ProcessStateIdle, so startInternal() will succeed
 	if err := pc.startInternal(ctx); err != nil {
 		pc.logger.Errorf("Failed to start process during restart: %v", err)
 		return fmt.Errorf("failed to start process during restart: %v", err)
 	}
 
-	pc.logger.Infof("Process control restarted successfully")
+	pc.logger.Infof("Process control restarted successfully, worker: %s", pc.workerID)
 	return nil
 }
 
-// terminateProcess handles graceful process termination with timeout and context cancellation
-func (pc *processControl) terminateProcess(ctx context.Context, idDeadPID bool) error {
-	if pc.process == nil {
+// terminateProcessExternal handles graceful process termination with timeout and context cancellation
+// This version works with an external process reference to avoid holding locks during long operations
+func (pc *processControl) terminateProcessExternal(ctx context.Context, proc *os.Process, idDeadPID bool) error {
+	if proc == nil {
 		return errors.NewProcessError("no process to terminate", nil)
 	}
 
-	pid := pc.process.Pid
+	pid := proc.Pid
 	pc.logger.Infof("Terminating process PID %d", pid)
 
 	// Determine graceful timeout
@@ -430,7 +535,7 @@ func (pc *processControl) terminateProcess(ctx context.Context, idDeadPID bool) 
 
 	// Start a goroutine to wait for process exit
 	go func() {
-		state, err := pc.process.Wait()
+		state, err := proc.Wait()
 		if err != nil {
 			done <- errors.NewProcessError("process wait failed", err).WithContext("pid", pid)
 		} else {
@@ -468,7 +573,7 @@ func (pc *processControl) terminateProcess(ctx context.Context, idDeadPID bool) 
 	pc.logger.Warnf("Force killing process PID %d", pid)
 
 	// Use Kill() which sends SIGKILL on Unix and TerminateProcess on Windows
-	if err := pc.process.Kill(); err != nil {
+	if err := proc.Kill(); err != nil {
 		return errors.NewProcessError("failed to kill process", err).WithContext("pid", pid)
 	}
 
@@ -485,5 +590,115 @@ func (pc *processControl) terminateProcess(ctx context.Context, idDeadPID bool) 
 	case <-ctx.Done():
 		pc.logger.Warnf("Context cancelled during force termination of PID %d", pid)
 		return errors.NewCancelledError("termination cancelled", ctx.Err()).WithContext("pid", pid)
+	}
+}
+
+// terminateProcessWithPolicy handles termination with state management and flexible policies
+// This method consolidates termination logic for both normal stops and resource violations
+func (pc *processControl) terminateProcessWithPolicy(ctx context.Context, policy resourcelimits.ResourcePolicy, reason string) error {
+	pc.logger.Infof("Terminating process with policy %s, reason: %s, worker: %s", policy, reason, pc.workerID)
+
+	// Phase 1: State validation and transition
+	pc.mutex.Lock()
+
+	// Fast-path: already stopped
+	if pc.state == ProcessStateIdle {
+		pc.mutex.Unlock()
+		pc.logger.Infof("Process already stopped, worker: %s", pc.workerID)
+		return nil
+	}
+
+	// Determine target state based on policy
+	var targetState ProcessState
+	var skipGraceful bool
+
+	switch policy {
+	case resourcelimits.ResourcePolicyGracefulShutdown:
+		targetState = ProcessStateStopping
+		skipGraceful = false
+	case resourcelimits.ResourcePolicyImmediateKill:
+		targetState = ProcessStateTerminating
+		skipGraceful = true
+	default:
+		// For unknown policies, default to graceful
+		targetState = ProcessStateStopping
+		skipGraceful = false
+	}
+
+	// Set appropriate state to block other operations
+	pc.state = targetState
+	pc.logger.Debugf("State transition: -> %s (%s), worker: %s", targetState, policy, pc.workerID)
+
+	// Get process reference for termination
+	processToTerminate := pc.process
+
+	// For immediate kill, do full cleanup under lock
+	if skipGraceful {
+		pc.cleanupResourcesUnderLock()
+	}
+
+	// Clear process reference to prevent further operations
+	pc.process = nil
+
+	pc.mutex.Unlock()
+
+	// Phase 2: Termination outside lock
+	var terminationError error
+	if processToTerminate != nil {
+		if skipGraceful {
+			// Immediate kill
+			if err := processToTerminate.Kill(); err != nil {
+				pc.logger.Warnf("Failed to kill process: %v", err)
+				terminationError = err
+			} else {
+				pc.logger.Infof("Process killed immediately, worker: %s", pc.workerID)
+			}
+		} else {
+			// Graceful termination with timeout (reuse existing logic)
+			if err := pc.terminateProcessExternal(ctx, processToTerminate, false); err != nil {
+				pc.logger.Errorf("Failed to terminate process gracefully: %v", err)
+				terminationError = errors.NewProcessError("failed to terminate process", err)
+			}
+		}
+	}
+
+	// Phase 3: Final state transition and cleanup
+	pc.mutex.Lock()
+
+	// For graceful shutdown, do remaining cleanup under lock
+	if !skipGraceful {
+		pc.cleanupResourcesUnderLock()
+	}
+
+	pc.state = ProcessStateIdle
+	pc.logger.Debugf("State transition: %s -> idle, worker: %s", targetState, pc.workerID)
+	pc.mutex.Unlock()
+
+	return terminationError
+}
+
+// cleanupResourcesUnderLock performs resource cleanup while holding the mutex
+func (pc *processControl) cleanupResourcesUnderLock() {
+	// Stop resource monitoring
+	if pc.resourceManager != nil {
+		pc.resourceManager.Stop()
+		pc.resourceManager = nil
+		pc.logger.Debugf("Resource monitoring stopped for worker %s", pc.workerID)
+	}
+
+	// Stop health monitor
+	if pc.healthMonitor != nil {
+		pc.healthMonitor.Stop()
+		pc.healthMonitor = nil
+		pc.logger.Debugf("Health monitor stopped for worker %s", pc.workerID)
+	}
+
+	// Close stdout reader
+	if pc.stdout != nil {
+		if err := pc.stdout.Close(); err != nil {
+			pc.logger.Warnf("Failed to close stdout: %v", err)
+		}
+		pc.stdout = nil
+		pc.logger.Debugf("Stdout closed for worker %s", pc.workerID)
 	}
 }
