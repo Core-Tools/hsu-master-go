@@ -102,10 +102,9 @@ func (pc *processControl) Restart(ctx context.Context) error {
 }
 
 // GetState returns the current process state (for monitoring/debugging)
+// ✅ DEFER-ONLY: Uses automatic unlock
 func (pc *processControl) GetState() ProcessState {
-	pc.mutex.RLock()
-	defer pc.mutex.RUnlock()
-	return pc.state
+	return pc.safeGetState()
 }
 
 func (pc *processControl) startInternal(ctx context.Context) error {
@@ -414,58 +413,27 @@ func (pc *processControl) executeViolationPolicy(policy resourcelimits.ResourceP
 	}
 }
 
+// ✅ DEFER-ONLY: stopInternal now uses automatic unlock only!
 func (pc *processControl) stopInternal(ctx context.Context, idDeadPID bool) error {
 	pc.logger.Infof("Stopping process control...")
 
-	// Phase 1: Quick state validation and transition under lock
-	var processToTerminate *os.Process
-
-	pc.mutex.Lock()
-
-	// ✅ CRITICAL: Validate state transition before proceeding
-	if !pc.canStopFromState(pc.state) {
-		currentState := pc.state
-		pc.mutex.Unlock()
-		return errors.NewValidationError(
-			fmt.Sprintf("cannot stop process in state '%s': operation not allowed", currentState),
-			nil).WithContext("worker", pc.workerID).WithContext("current_state", string(currentState))
+	// Phase 1: State validation and planning (defer-only lock)
+	plan := pc.validateAndPlanStop()
+	if !plan.shouldProceed {
+		return plan.errorToReturn // Could be nil for fast-path
 	}
-
-	// Fast-path: already stopped
-	if pc.state == ProcessStateIdle {
-		pc.mutex.Unlock()
-		pc.logger.Infof("Process already stopped, worker: %s", pc.workerID)
-		return nil
-	}
-
-	// Set stopping state immediately to block new operations
-	pc.state = ProcessStateStopping
-	pc.logger.Debugf("State transition: %s -> stopping, worker: %s", pc.state, pc.workerID)
-
-	// Get process reference for termination
-	processToTerminate = pc.process
-	pc.process = nil // Clear reference immediately
-
-	pc.mutex.Unlock()
 
 	// Phase 2: Termination outside lock (reuse the existing logic)
 	var terminationError error
-	if processToTerminate != nil {
-		if err := pc.terminateProcessExternal(ctx, processToTerminate, idDeadPID); err != nil {
+	if plan.processToTerminate != nil {
+		if err := pc.terminateProcessExternal(ctx, plan.processToTerminate, idDeadPID); err != nil {
 			pc.logger.Errorf("Failed to terminate process: %v", err)
 			terminationError = errors.NewProcessError("failed to terminate process", err)
 		}
 	}
 
-	// Phase 3: Final cleanup and state transition
-	pc.mutex.Lock()
-
-	// ✅ SIMPLIFIED: Use shared cleanup logic
-	pc.cleanupResourcesUnderLock()
-
-	pc.state = ProcessStateIdle // ✅ Now safe for new starts
-	pc.logger.Debugf("State transition: stopping -> idle, worker: %s", pc.workerID)
-	pc.mutex.Unlock()
+	// Phase 3: Final cleanup and state transition (defer-only lock)
+	pc.finalizeStop()
 
 	if terminationError != nil {
 		return terminationError
@@ -595,59 +563,22 @@ func (pc *processControl) terminateProcessExternal(ctx context.Context, proc *os
 
 // terminateProcessWithPolicy handles termination with state management and flexible policies
 // This method consolidates termination logic for both normal stops and resource violations
+// ✅ DEFER-ONLY: No explicit unlock calls - all automatic via defer!
 func (pc *processControl) terminateProcessWithPolicy(ctx context.Context, policy resourcelimits.ResourcePolicy, reason string) error {
 	pc.logger.Infof("Terminating process with policy %s, reason: %s, worker: %s", policy, reason, pc.workerID)
 
-	// Phase 1: State validation and transition
-	pc.mutex.Lock()
-
-	// Fast-path: already stopped
-	if pc.state == ProcessStateIdle {
-		pc.mutex.Unlock()
-		pc.logger.Infof("Process already stopped, worker: %s", pc.workerID)
-		return nil
+	// Phase 1: State validation and transition (defer-only lock)
+	plan := pc.validateAndPlanTermination(policy, reason)
+	if !plan.shouldProceed {
+		return plan.errorToReturn // Could be nil for fast-path
 	}
-
-	// Determine target state based on policy
-	var targetState ProcessState
-	var skipGraceful bool
-
-	switch policy {
-	case resourcelimits.ResourcePolicyGracefulShutdown:
-		targetState = ProcessStateStopping
-		skipGraceful = false
-	case resourcelimits.ResourcePolicyImmediateKill:
-		targetState = ProcessStateTerminating
-		skipGraceful = true
-	default:
-		// For unknown policies, default to graceful
-		targetState = ProcessStateStopping
-		skipGraceful = false
-	}
-
-	// Set appropriate state to block other operations
-	pc.state = targetState
-	pc.logger.Debugf("State transition: -> %s (%s), worker: %s", targetState, policy, pc.workerID)
-
-	// Get process reference for termination
-	processToTerminate := pc.process
-
-	// For immediate kill, do full cleanup under lock
-	if skipGraceful {
-		pc.cleanupResourcesUnderLock()
-	}
-
-	// Clear process reference to prevent further operations
-	pc.process = nil
-
-	pc.mutex.Unlock()
 
 	// Phase 2: Termination outside lock
 	var terminationError error
-	if processToTerminate != nil {
-		if skipGraceful {
+	if plan.processToTerminate != nil {
+		if plan.skipGraceful {
 			// Immediate kill
-			if err := processToTerminate.Kill(); err != nil {
+			if err := plan.processToTerminate.Kill(); err != nil {
 				pc.logger.Warnf("Failed to kill process: %v", err)
 				terminationError = err
 			} else {
@@ -655,24 +586,15 @@ func (pc *processControl) terminateProcessWithPolicy(ctx context.Context, policy
 			}
 		} else {
 			// Graceful termination with timeout (reuse existing logic)
-			if err := pc.terminateProcessExternal(ctx, processToTerminate, false); err != nil {
+			if err := pc.terminateProcessExternal(ctx, plan.processToTerminate, false); err != nil {
 				pc.logger.Errorf("Failed to terminate process gracefully: %v", err)
 				terminationError = errors.NewProcessError("failed to terminate process", err)
 			}
 		}
 	}
 
-	// Phase 3: Final state transition and cleanup
-	pc.mutex.Lock()
-
-	// For graceful shutdown, do remaining cleanup under lock
-	if !skipGraceful {
-		pc.cleanupResourcesUnderLock()
-	}
-
-	pc.state = ProcessStateIdle
-	pc.logger.Debugf("State transition: %s -> idle, worker: %s", targetState, pc.workerID)
-	pc.mutex.Unlock()
+	// Phase 3: Final state transition and cleanup (defer-only lock)
+	pc.finalizeTermination(plan)
 
 	return terminationError
 }
@@ -701,4 +623,145 @@ func (pc *processControl) cleanupResourcesUnderLock() {
 		pc.stdout = nil
 		pc.logger.Debugf("Stdout closed for worker %s", pc.workerID)
 	}
+}
+
+// ===== DEFER-ONLY LOCKING HELPERS =====
+// These functions encapsulate lock scopes with automatic unlock via defer
+
+// terminationPlan holds data extracted under lock for termination operations
+type terminationPlan struct {
+	processToTerminate *os.Process
+	targetState        ProcessState
+	skipGraceful       bool
+	shouldProceed      bool
+	errorToReturn      error
+}
+
+// validateAndPlanTermination validates state and creates termination plan (defer-only lock)
+func (pc *processControl) validateAndPlanTermination(policy resourcelimits.ResourcePolicy, reason string) *terminationPlan {
+	pc.mutex.Lock()
+	defer pc.mutex.Unlock() // ✅ AUTOMATIC unlock - no fragility!
+
+	plan := &terminationPlan{}
+
+	// Fast-path: already stopped
+	if pc.state == ProcessStateIdle {
+		pc.logger.Infof("Process already stopped, worker: %s", pc.workerID)
+		plan.shouldProceed = false
+		return plan
+	}
+
+	// Determine target state and behavior based on policy
+	switch policy {
+	case resourcelimits.ResourcePolicyGracefulShutdown:
+		plan.targetState = ProcessStateStopping
+		plan.skipGraceful = false
+	case resourcelimits.ResourcePolicyImmediateKill:
+		plan.targetState = ProcessStateTerminating
+		plan.skipGraceful = true
+	default:
+		// For unknown policies, default to graceful
+		plan.targetState = ProcessStateStopping
+		plan.skipGraceful = false
+	}
+
+	// Set appropriate state to block other operations
+	pc.state = plan.targetState
+	pc.logger.Debugf("State transition: -> %s (%s), worker: %s", plan.targetState, policy, pc.workerID)
+
+	// Get process reference for termination
+	plan.processToTerminate = pc.process
+
+	// For immediate kill, do full cleanup under same lock
+	if plan.skipGraceful {
+		pc.cleanupResourcesUnderLock()
+	}
+
+	// Clear process reference to prevent further operations
+	pc.process = nil
+
+	plan.shouldProceed = true
+	return plan
+}
+
+// finalizeTermination completes state transition after termination (defer-only lock)
+func (pc *processControl) finalizeTermination(plan *terminationPlan) {
+	pc.mutex.Lock()
+	defer pc.mutex.Unlock() // ✅ AUTOMATIC unlock - no fragility!
+
+	// For graceful shutdown, do remaining cleanup under lock
+	if !plan.skipGraceful {
+		pc.cleanupResourcesUnderLock()
+	}
+
+	pc.state = ProcessStateIdle
+	pc.logger.Debugf("State transition: %s -> idle, worker: %s", plan.targetState, pc.workerID)
+}
+
+// stopPlan holds data extracted under lock for stop operations
+type stopPlan struct {
+	processToTerminate *os.Process
+	shouldProceed      bool
+	errorToReturn      error
+}
+
+// validateAndPlanStop validates state and creates stop plan (defer-only lock)
+func (pc *processControl) validateAndPlanStop() *stopPlan {
+	pc.mutex.Lock()
+	defer pc.mutex.Unlock() // ✅ AUTOMATIC unlock - no fragility!
+
+	plan := &stopPlan{}
+
+	// Validate state transition before proceeding
+	if !pc.canStopFromState(pc.state) {
+		plan.shouldProceed = false
+		plan.errorToReturn = errors.NewValidationError(
+			fmt.Sprintf("cannot stop process in state '%s': operation not allowed", pc.state),
+			nil).WithContext("worker", pc.workerID).WithContext("current_state", string(pc.state))
+		return plan
+	}
+
+	// Fast-path: already stopped
+	if pc.state == ProcessStateIdle {
+		pc.logger.Infof("Process already stopped, worker: %s", pc.workerID)
+		plan.shouldProceed = false
+		return plan
+	}
+
+	// Set stopping state immediately to block new operations
+	pc.state = ProcessStateStopping
+	pc.logger.Debugf("State transition: -> stopping, worker: %s", pc.workerID)
+
+	// Get process reference for termination
+	plan.processToTerminate = pc.process
+	pc.process = nil // Clear reference immediately
+
+	plan.shouldProceed = true
+	return plan
+}
+
+// finalizeStop completes stop operation with cleanup (defer-only lock)
+func (pc *processControl) finalizeStop() {
+	pc.mutex.Lock()
+	defer pc.mutex.Unlock() // ✅ AUTOMATIC unlock - no fragility!
+
+	// Use shared cleanup logic
+	pc.cleanupResourcesUnderLock()
+
+	pc.state = ProcessStateIdle
+	pc.logger.Debugf("State transition: stopping -> idle, worker: %s", pc.workerID)
+}
+
+// safeGetProcess safely gets process reference with defer-only read lock
+func (pc *processControl) safeGetProcess() *os.Process {
+	pc.mutex.RLock()
+	defer pc.mutex.RUnlock() // ✅ AUTOMATIC unlock - no fragility!
+	return pc.process
+}
+
+// safeGetState gets current state with defer-only read lock (replaces the existing GetState)
+func (pc *processControl) safeGetState() ProcessState {
+	pc.mutex.RLock()
+	defer pc.mutex.RUnlock() // ✅ AUTOMATIC unlock - no fragility!
+	return pc.state
 }
