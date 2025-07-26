@@ -1,0 +1,6 @@
+- log collection feature
+- re-use process helpers in resource enforcer
+- unit tests for health check
+- unit tests for resource limits
+- unit tests for circuit breaker
+- unit tests for workersstatemachine
