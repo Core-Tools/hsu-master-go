@@ -174,7 +174,7 @@ func Run(runDuration int, configFile string, enableLogCollection bool, coreLogge
 	masterLogger.Infof("Ready to stop master...")
 
 	// Stop master
-	master.Stop(ctx)
+	master.Stop(context.Background()) // Reset context to background to enable graceful shutdown
 
 	masterLogger.Infof("Master runner stopped")
 

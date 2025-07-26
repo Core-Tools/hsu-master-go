@@ -528,7 +528,7 @@ func (pc *processControl) terminateProcessExternal(ctx context.Context, proc *os
 	// On Unix: SIGTERM to process group
 	// On Windows: Ctrl-Break event
 	if err := process.SendTerminationSignal(pid, idDeadPID, gracefulTimeout); err != nil {
-		pc.logger.Warnf("Failed to send termination signal: %v", err)
+		pc.logger.Warnf("Failed to send termination signal for PID %d: %v", pid, err)
 	}
 
 	pc.logger.Infof("Waiting for process PID %d to terminate gracefully", pid)
