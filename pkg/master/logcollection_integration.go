@@ -25,9 +25,21 @@ func NewLogCollectionIntegration(masterConfig *MasterConfig, logger logging.Logg
 		enabled: false,
 	}
 
-	// Check if log collection is configured and enabled
-	if masterConfig.LogCollection == nil || !masterConfig.LogCollection.Enabled {
-		logger.Debugf("Log collection is disabled or not configured")
+	var logConfig *config.LogCollectionConfig
+
+	// Check if log collection is configured in config file
+	if masterConfig.LogCollection != nil && masterConfig.LogCollection.Enabled {
+		// Use config from file
+		logConfig = masterConfig.LogCollection
+		logger.Infof("Using log collection configuration from config file")
+	} else if masterConfig.LogCollection == nil {
+		// No log collection section in config - use defaults
+		defaultConfig := config.DefaultLogCollectionConfig()
+		logConfig = &defaultConfig
+		logger.Infof("No log_collection section found in config - using default log collection configuration")
+	} else {
+		// Log collection is explicitly disabled in config
+		logger.Debugf("Log collection is explicitly disabled in configuration")
 		return integration, nil
 	}
 
@@ -44,7 +56,7 @@ func NewLogCollectionIntegration(masterConfig *MasterConfig, logger logging.Logg
 
 	// Create log collection service with path manager
 	service := logcollection.NewLogCollectionServiceWithPathManager(
-		*masterConfig.LogCollection,
+		*logConfig,
 		structuredLogger,
 		pathManager,
 	)
@@ -52,7 +64,23 @@ func NewLogCollectionIntegration(masterConfig *MasterConfig, logger logging.Logg
 	integration.service = service
 	integration.enabled = true
 
-	logger.Infof("Log collection integration initialized successfully")
+	logger.Infof("Log collection integration initialized successfully (enabled: %t)", integration.enabled)
+
+	// Log configuration summary for debugging
+	logger.Infof("Log collection config summary:")
+	logger.Infof("  - Global aggregation enabled: %t", logConfig.GlobalAggregation.Enabled)
+	logger.Infof("  - Default worker capture stdout: %t", logConfig.DefaultWorker.CaptureStdout)
+	logger.Infof("  - Default worker capture stderr: %t", logConfig.DefaultWorker.CaptureStderr)
+	logger.Infof("  - Worker directory template: %s", logConfig.System.WorkerDirectory)
+	if len(logConfig.GlobalAggregation.Targets) > 0 {
+		logger.Infof("  - Global aggregation targets: %d configured", len(logConfig.GlobalAggregation.Targets))
+		for i, target := range logConfig.GlobalAggregation.Targets {
+			logger.Infof("    [%d] Type: %s, Format: %s", i, target.Type, target.Format)
+			if target.Path != "" {
+				logger.Infof("        Path: %s", target.Path)
+			}
+		}
+	}
 
 	return integration, nil
 }

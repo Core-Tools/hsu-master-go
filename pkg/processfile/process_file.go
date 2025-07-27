@@ -162,10 +162,12 @@ func (m *ProcessFileManager) GenerateLogDirectoryPath() string {
 
 	// Create app subdirectory if requested
 	if m.config.UseSubdirectory {
-		return filepath.Join(baseDir, m.config.AppName)
+		// For consistency with PID files: C:\ProgramData\hsu-master\logs
+		return filepath.Join(baseDir, m.config.AppName, "logs")
 	}
 
-	return baseDir
+	// For direct log directory without app subdirectory
+	return filepath.Join(baseDir, "logs")
 }
 
 // GenerateWorkerLogDirectoryPath generates the log directory path for worker-specific logs
@@ -395,12 +397,12 @@ func (m *ProcessFileManager) getLogBaseDirectory() string {
 func (m *ProcessFileManager) getSystemLogDirectory() string {
 	switch runtime.GOOS {
 	case "windows":
-		// Use ProgramData for system service logs on Windows
+		// Use ProgramData for system service logs on Windows (consistent with PID files)
 		programData := os.Getenv("PROGRAMDATA")
 		if programData == "" {
 			programData = "C:\\ProgramData"
 		}
-		return filepath.Join(programData, "logs")
+		return programData
 
 	case "darwin":
 		// macOS system service logs

@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -345,7 +346,13 @@ func (s *logCollectionService) initializeOutputs() error {
 	s.outputs = make([]LogOutputWriter, 0, len(s.config.GlobalAggregation.Targets))
 
 	for _, targetConfig := range s.config.GlobalAggregation.Targets {
-		writer, err := createOutputWriter(targetConfig)
+		// Resolve path template to absolute path for file outputs
+		resolvedConfig := targetConfig
+		if targetConfig.Type == "file" {
+			resolvedConfig.Path = s.resolveOutputPath(targetConfig)
+		}
+
+		writer, err := createOutputWriter(resolvedConfig)
 		if err != nil {
 			return fmt.Errorf("failed to create output writer for %s: %w", targetConfig.Type, err)
 		}
@@ -584,17 +591,19 @@ func (w *workerLogCollector) recordError(errMsg string) {
 
 // createOutputWriter creates an output writer for a target
 func createOutputWriter(targetConfig config.OutputTargetConfig) (LogOutputWriter, error) {
-	// For Phase 1, implement basic stdout output
-	// Full implementation will come in Phase 2
 	switch targetConfig.Type {
 	case "stdout", "master_stdout":
 		return &stdoutWriter{}, nil
+	case "file":
+		return &fileWriter{
+			path: targetConfig.Path,
+		}, nil
 	default:
-		return &stdoutWriter{}, nil // Fallback to stdout for now
+		return &stdoutWriter{}, nil // Fallback to stdout for unknown types
 	}
 }
 
-// stdoutWriter is a basic output writer for Phase 1
+// stdoutWriter is a basic output writer for console output
 type stdoutWriter struct{}
 
 func (s *stdoutWriter) Write(entry LogEntry) error {
@@ -612,6 +621,84 @@ func (s *stdoutWriter) Flush() error {
 }
 
 func (s *stdoutWriter) Close() error {
+	return nil
+}
+
+// fileWriter writes logs to files with automatic directory creation
+type fileWriter struct {
+	path   string
+	file   *os.File
+	writer *bufio.Writer
+	mutex  sync.Mutex
+}
+
+func (f *fileWriter) Write(entry LogEntry) error {
+	f.mutex.Lock()
+	defer f.mutex.Unlock()
+
+	// Ensure file is open
+	if err := f.ensureFileOpen(); err != nil {
+		return fmt.Errorf("failed to open log file: %w", err)
+	}
+
+	// Write log entry
+	logLine := fmt.Sprintf("[%s][%s][%s] %s\n",
+		entry.Timestamp.Format(time.RFC3339),
+		entry.WorkerID,
+		entry.Stream,
+		entry.Message,
+	)
+
+	if _, err := f.writer.WriteString(logLine); err != nil {
+		return fmt.Errorf("failed to write log entry: %w", err)
+	}
+
+	return nil
+}
+
+func (f *fileWriter) Flush() error {
+	f.mutex.Lock()
+	defer f.mutex.Unlock()
+
+	if f.writer != nil {
+		return f.writer.Flush()
+	}
+	return nil
+}
+
+func (f *fileWriter) Close() error {
+	f.mutex.Lock()
+	defer f.mutex.Unlock()
+
+	if f.writer != nil {
+		f.writer.Flush()
+	}
+	if f.file != nil {
+		return f.file.Close()
+	}
+	return nil
+}
+
+// ensureFileOpen creates the directory and opens the file if not already open
+func (f *fileWriter) ensureFileOpen() error {
+	if f.file != nil {
+		return nil // Already open
+	}
+
+	// Create directory structure
+	dir := filepath.Dir(f.path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("failed to create log directory %s: %w", dir, err)
+	}
+
+	// Open file for writing (create if not exists, append if exists)
+	file, err := os.OpenFile(f.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to open log file %s: %w", f.path, err)
+	}
+
+	f.file = file
+	f.writer = bufio.NewWriter(file)
 	return nil
 }
 

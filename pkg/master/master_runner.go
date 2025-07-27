@@ -19,12 +19,13 @@ import (
 func Run(runDuration int, configFile string, enableLogCollection bool, coreLogger coreLogging.Logger, masterLogger logging.Logger) error {
 	masterLogger.Infof("Master runner starting...")
 
-	// Create context with run duration
-	ctx := context.Background()
+	// Create separate contexts: one for timeout, one for components
+	componentCtx := context.Background()
+	operationCtx := componentCtx
+
 	if runDuration > 0 {
-		duration := time.Duration(runDuration) * time.Second
-		masterLogger.Infof("Using RUN DURATION of %d seconds", duration)
-		ctx, _ = context.WithTimeout(ctx, duration)
+		masterLogger.Infof("Using RUN DURATION of %d seconds", runDuration)
+		operationCtx, _ = context.WithTimeout(componentCtx, time.Duration(runDuration)*time.Second)
 	}
 
 	// Log configuration file
@@ -60,13 +61,22 @@ func Run(runDuration int, configFile string, enableLogCollection bool, coreLogge
 		}
 
 		// Start log collection service
-		if err := logIntegration.Start(ctx); err != nil {
+		if err := logIntegration.Start(componentCtx); err != nil {
 			return errors.NewInternalError("failed to start log collection", err)
 		}
 		defer logIntegration.Stop()
 
 		if logIntegration.IsEnabled() {
 			masterLogger.Infof("Log collection service started successfully")
+
+			// Log directory information for debugging
+			if pathManager := logIntegration.GetPathManager(); pathManager != nil {
+				logDir := pathManager.GenerateLogDirectoryPath()
+				masterLogger.Infof("Log collection directory: %s", logDir)
+
+				workerLogDir := pathManager.GenerateWorkerLogDirectoryPath()
+				masterLogger.Infof("Worker logs directory: %s", workerLogDir)
+			}
 		} else {
 			masterLogger.Infof("Log collection is disabled")
 		}
@@ -119,7 +129,7 @@ func Run(runDuration int, configFile string, enableLogCollection bool, coreLogge
 	}
 
 	// Start master
-	master.Start(ctx)
+	master.Start(operationCtx)
 
 	masterLogger.Infof("Enabling signal handling...")
 
@@ -140,7 +150,7 @@ func Run(runDuration int, configFile string, enableLogCollection bool, coreLogge
 
 		// Start all workers (lifecycle phase)
 		for _, worker := range workers {
-			err := master.StartWorker(ctx, worker.ID())
+			err := master.StartWorker(componentCtx, worker.ID())
 			if err != nil {
 				masterLogger.Errorf("Failed to start worker %s: %v", worker.ID(), err)
 				// Continue with other workers rather than failing completely
@@ -162,7 +172,7 @@ func Run(runDuration int, configFile string, enableLogCollection bool, coreLogge
 				os.Exit(42)
 			}
 		}
-	case <-ctx.Done():
+	case <-operationCtx.Done():
 		masterLogger.Infof("Master runner timed out")
 	}
 
