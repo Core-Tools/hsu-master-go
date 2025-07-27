@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/core-tools/hsu-master-go/pkg/processfile"
 	"github.com/core-tools/hsu-master/pkg/logcollection"
 	"github.com/core-tools/hsu-master/pkg/logcollection/config"
 	"github.com/core-tools/hsu-master/pkg/monitoring"
+	"github.com/core-tools/hsu-master/pkg/processfile"
 	"github.com/core-tools/hsu-master/pkg/workers/processcontrol"
 	"github.com/core-tools/hsu-master/pkg/workers/processcontrolimpl"
 )

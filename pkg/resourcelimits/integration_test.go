@@ -5,7 +5,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 )
 
 // MockLogger for testing
@@ -33,128 +35,71 @@ func (m *MockResourceLimitLogger) Errorf(format string, args ...interface{}) {
 	m.Called(format, args)
 }
 
-func TestResourceLimitManagerViolationHandlingModes(t *testing.T) {
+func TestResourceLimitManagerViolationDispatch(t *testing.T) {
 	logger := &MockResourceLimitLogger{}
 	logger.On("Infof", mock.Anything, mock.Anything).Maybe()
 	logger.On("Debugf", mock.Anything, mock.Anything).Maybe()
+	logger.On("Warnf", mock.Anything, mock.Anything).Maybe()
 	logger.On("Errorf", mock.Anything, mock.Anything).Maybe()
 
 	// Test External mode with callback
-	t.Run("ExternalMode", func(t *testing.T) {
-		// Create limits with external violation handling
-		limits := &ResourceLimits{
-			Memory: &MemoryLimits{
-				MaxRSS: 100 * 1024 * 1024, // 100MB
-				Policy: ResourcePolicyRestart,
-			},
-			Monitoring: &ResourceMonitoringConfig{
-				Enabled:           true,
-				Interval:          time.Second,
-				ViolationHandling: ViolationHandlingExternal,
-			},
-		}
+	// Create limits with external violation handling
+	limits := &ResourceLimits{
+		Memory: &MemoryLimits{
+			MaxRSS: 100 * 1024 * 1024, // 100MB
+			Policy: ResourcePolicyRestart,
+		},
+		Monitoring: &ResourceMonitoringConfig{
+			Enabled:  true,
+			Interval: time.Second,
+		},
+	}
 
-		manager := NewResourceLimitManager(12345, limits, logger)
+	manager := NewResourceLimitManager(12345, limits, logger)
 
-		// Verify mode is external
-		if mode := manager.GetViolationHandlingMode(); mode != ViolationHandlingExternal {
-			t.Errorf("Expected external mode, got %s", mode)
-		}
+	// Set up callback
+	var callbackInvoked bool
+	var receivedPolicy ResourcePolicy
+	var receivedViolation *ResourceViolation
+	var mu sync.Mutex
 
-		// Set up external callback
-		var callbackInvoked bool
-		var receivedViolation *ResourceViolation
-		var mu sync.Mutex
-
-		manager.SetViolationCallback(func(violation *ResourceViolation) {
-			mu.Lock()
-			defer mu.Unlock()
-			callbackInvoked = true
-			receivedViolation = violation
-		})
-
-		// Test that callback gets called
-		testViolation := &ResourceViolation{
-			LimitType:    ResourceLimitTypeMemory,
-			CurrentValue: 200 * 1024 * 1024,
-			LimitValue:   100 * 1024 * 1024,
-			Severity:     ViolationSeverityCritical,
-			Timestamp:    time.Now(),
-			Message:      "Test violation",
-		}
-
-		// Simulate violation dispatch
-		manager.(*resourceLimitManager).onViolationDispatch(testViolation)
-
-		// Wait a bit for async processing
-		time.Sleep(100 * time.Millisecond)
-
+	manager.SetViolationCallback(func(policy ResourcePolicy, violation *ResourceViolation) {
 		mu.Lock()
-		if !callbackInvoked {
-			t.Error("External callback was not invoked")
-		}
-		if receivedViolation == nil {
-			t.Error("No violation received by callback")
-		} else if receivedViolation.Message != "Test violation" {
-			t.Errorf("Wrong violation received: %s", receivedViolation.Message)
-		}
-		mu.Unlock()
+		defer mu.Unlock()
+		callbackInvoked = true
+		receivedPolicy = policy
+		receivedViolation = violation
 	})
 
-	// Test Internal mode (default behavior)
-	t.Run("InternalMode", func(t *testing.T) {
-		limits := &ResourceLimits{
-			Memory: &MemoryLimits{
-				MaxRSS: 100 * 1024 * 1024,
-				Policy: ResourcePolicyLog,
-			},
-			// No ViolationHandling specified - should default to Internal
-		}
+	// Test that callback gets called
+	testViolation := &ResourceViolation{
+		LimitType:    ResourceLimitTypeMemory,
+		CurrentValue: 200 * 1024 * 1024,
+		LimitValue:   100 * 1024 * 1024,
+		Severity:     ViolationSeverityCritical,
+		Timestamp:    time.Now(),
+		Message:      "Test violation",
+	}
 
-		manager := NewResourceLimitManager(12345, limits, logger)
+	// Simulate violation dispatch
+	manager.(*resourceLimitManager).dispatchViolation(testViolation)
 
-		// Verify mode is internal (default)
-		if mode := manager.GetViolationHandlingMode(); mode != ViolationHandlingInternal {
-			t.Errorf("Expected internal mode, got %s", mode)
-		}
-	})
+	// Wait a bit for async processing
+	time.Sleep(100 * time.Millisecond)
 
-	// Test Disabled mode
-	t.Run("DisabledMode", func(t *testing.T) {
-		limits := &ResourceLimits{
-			Memory: &MemoryLimits{
-				MaxRSS: 100 * 1024 * 1024,
-				Policy: ResourcePolicyRestart,
-			},
-			Monitoring: &ResourceMonitoringConfig{
-				Enabled:           true,
-				ViolationHandling: ViolationHandlingDisabled,
-			},
-		}
-
-		manager := NewResourceLimitManager(12345, limits, logger)
-
-		// Verify mode is disabled
-		if mode := manager.GetViolationHandlingMode(); mode != ViolationHandlingDisabled {
-			t.Errorf("Expected disabled mode, got %s", mode)
-		}
-
-		// Test that violations are only logged, not enforced
-		testViolation := &ResourceViolation{
-			LimitType: ResourceLimitTypeMemory,
-			Severity:  ViolationSeverityCritical,
-			Message:   "Test disabled violation",
-		}
-
-		// This should only log, not trigger enforcement
-		manager.(*resourceLimitManager).onViolationDispatch(testViolation)
-	})
+	mu.Lock()
+	require.True(t, callbackInvoked, "External callback was not invoked")
+	assert.Equal(t, ResourcePolicyRestart, receivedPolicy)
+	require.NotNil(t, receivedViolation)
+	assert.Equal(t, "Test violation", receivedViolation.Message)
+	mu.Unlock()
 }
 
 func TestProcessControlIntegrationPattern(t *testing.T) {
 	logger := &MockResourceLimitLogger{}
 	logger.On("Infof", mock.Anything, mock.Anything).Maybe()
 	logger.On("Debugf", mock.Anything, mock.Anything).Maybe()
+	logger.On("Warnf", mock.Anything, mock.Anything).Maybe()
 	logger.On("Errorf", mock.Anything, mock.Anything).Maybe()
 
 	// Simulate ProcessControl configuration
@@ -173,22 +118,18 @@ func TestProcessControlIntegrationPattern(t *testing.T) {
 		},
 	}
 
-	// Configure for external handling (like ProcessControl would)
-	if limits.Monitoring == nil {
-		limits.Monitoring = &ResourceMonitoringConfig{}
-	}
-	limits.Monitoring.ViolationHandling = ViolationHandlingExternal
-
 	manager := NewResourceLimitManager(12345, limits, logger)
 
 	// Simulate ProcessControl violation handling
-	var violations []*ResourceViolation
+	var receivedPolicies []ResourcePolicy
+	var receivedViolations []*ResourceViolation
 	var mu sync.Mutex
 
-	processControlViolationHandler := func(violation *ResourceViolation) {
+	processControlViolationHandler := func(policy ResourcePolicy, violation *ResourceViolation) {
 		mu.Lock()
 		defer mu.Unlock()
-		violations = append(violations, violation)
+		receivedPolicies = append(receivedPolicies, policy)
+		receivedViolations = append(receivedViolations, violation)
 
 		// Simulate ProcessControl policy handling
 		switch violation.LimitType {
@@ -233,7 +174,7 @@ func TestProcessControlIntegrationPattern(t *testing.T) {
 
 	// Dispatch violations
 	for _, violation := range testViolations {
-		manager.(*resourceLimitManager).onViolationDispatch(violation)
+		manager.(*resourceLimitManager).dispatchViolation(violation)
 	}
 
 	// Wait for processing
@@ -242,7 +183,11 @@ func TestProcessControlIntegrationPattern(t *testing.T) {
 	// Verify all violations were handled
 	mu.Lock()
 	defer mu.Unlock()
-	if len(violations) != 3 {
-		t.Errorf("Expected 3 violations handled, got %d", len(violations))
-	}
+	require.Equal(t, 2, len(receivedPolicies), "Expected 2 policies handled, got %d", len(receivedPolicies))
+	assert.Equal(t, ResourcePolicyRestart, receivedPolicies[0])
+	assert.Equal(t, ResourcePolicyGracefulShutdown, receivedPolicies[1])
+
+	require.Equal(t, 2, len(receivedViolations), "Expected 2 violations handled, got %d", len(receivedViolations))
+	assert.Equal(t, "Memory limit exceeded", receivedViolations[0].Message)
+	assert.Equal(t, "CPU limit exceeded", receivedViolations[1].Message)
 }

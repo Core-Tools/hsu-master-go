@@ -11,29 +11,20 @@ import (
 	"github.com/core-tools/hsu-master/pkg/processstate"
 )
 
-// Enhanced sendTerminationSignal using the improved console signal fix
-func SendTerminationSignal(pid int, idDead bool, timeout time.Duration) error {
-	if idDead {
-		// Apply the AttachConsole dead PID hack to fix Windows signal handling
-		// This restores Ctrl+C functionality for the master process
-		return consoleSignalFix(pid)
-	} else {
-		// Send actual Ctrl+Break signal to alive process with safety checks
-		return sendCtrlBreakToProcessSafe(pid, timeout)
-	}
-}
-
 // Windows console operation lock to prevent race conditions
 var consoleOperationLock sync.Mutex
 
-// consoleSignalFix implements the AttachConsole dead PID hack to fix Windows signal handling
-func consoleSignalFix(deadPID int) error {
+// Enhanced sendTerminationSignal using the improved console signal fix
+func SendTerminationSignal(pid int, idDead bool, timeout time.Duration) error {
+	if pid <= 0 {
+		return fmt.Errorf("invalid PID: %d", pid)
+	}
+
 	consoleOperationLock.Lock()
 	defer consoleOperationLock.Unlock()
 
-	// Verify the PID is actually dead before using it for console reset
-	if processstate.IsProcessRunning(deadPID) {
-		return fmt.Errorf("cannot use alive process PID %d for console signal fix", deadPID)
+	if idDead {
+		idDead = !processstate.IsProcessRunning(pid)
 	}
 
 	dll, err := syscall.LoadDLL("kernel32.dll")
@@ -42,8 +33,20 @@ func consoleSignalFix(deadPID int) error {
 	}
 	defer dll.Release()
 
+	if idDead {
+		// Apply the AttachConsole dead PID hack to fix Windows signal handling
+		// This restores Ctrl+C functionality for the master process
+		return consoleSignalFix(dll, pid)
+	} else {
+		// Send actual Ctrl+Break signal to alive process with safety checks
+		return sendCtrlBreakToProcessSafe(dll, pid, timeout)
+	}
+}
+
+// consoleSignalFix implements the AttachConsole dead PID hack to fix Windows signal handling
+func consoleSignalFix(dll *syscall.DLL, deadPID int) error {
 	// Try to attach to the dead process - this triggers console state reset
-	err = attachConsole(dll, deadPID)
+	err := attachConsole(dll, deadPID)
 	if err != nil {
 		// Expected to fail for dead process - that's the magic!
 		return nil
@@ -53,25 +56,7 @@ func consoleSignalFix(deadPID int) error {
 }
 
 // sendCtrlBreakToProcessSafe sends Ctrl+Break with liveness check and timeout protection
-func sendCtrlBreakToProcessSafe(pid int, timeout time.Duration) error {
-	if pid <= 0 {
-		return fmt.Errorf("invalid PID: %d", pid)
-	}
-
-	consoleOperationLock.Lock()
-	defer consoleOperationLock.Unlock()
-
-	// Check if process is alive before sending signal
-	if !processstate.IsProcessRunning(pid) {
-		return fmt.Errorf("process PID %d is not alive, skipping signal", pid)
-	}
-
-	dll, err := syscall.LoadDLL("kernel32.dll")
-	if err != nil {
-		return fmt.Errorf("failed to load kernel32.dll: %v", err)
-	}
-	defer dll.Release()
-
+func sendCtrlBreakToProcessSafe(dll *syscall.DLL, pid int, timeout time.Duration) error {
 	// Use timeout to prevent hanging
 	done := make(chan error, 1)
 	go func() {

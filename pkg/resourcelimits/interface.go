@@ -5,6 +5,9 @@ import (
 	"time"
 )
 
+// Callback function for handling resource violations
+type ResourceViolationCallback func(policy ResourcePolicy, violation *ResourceViolation)
+
 // ResourceLimitManager provides a unified interface for managing resource limits
 type ResourceLimitManager interface {
 	// Start begins resource limit management
@@ -13,54 +16,26 @@ type ResourceLimitManager interface {
 	// Stop stops resource limit management
 	Stop()
 
-	// GetLimits returns current resource limits
-	GetLimits() *ResourceLimits
-
-	// GetCurrentUsage returns current resource usage
-	GetCurrentUsage() (*ResourceUsage, error)
-
-	// GetViolations returns current resource violations
+	// GetViolations returns recent resource violations
 	GetViolations() []*ResourceViolation
 
-	// IsMonitoringEnabled returns true if monitoring is enabled
-	IsMonitoringEnabled() bool
-
-	// GetViolationHandlingMode returns the current violation handling mode
-	GetViolationHandlingMode() ViolationHandlingMode
-
 	// SetViolationCallback sets callback for limit violations
 	SetViolationCallback(callback ResourceViolationCallback)
 }
 
-// ResourceMonitor provides real-time resource usage monitoring
-type ResourceMonitor interface {
-	// GetCurrentUsage returns current resource usage
-	GetCurrentUsage() (*ResourceUsage, error)
+// ResourcePolicy defines what action to take when limits are violated
+type ResourcePolicy string
 
-	// Start begins resource monitoring
-	Start(ctx context.Context) error
-
-	// Stop stops resource monitoring
-	Stop()
-
-	// SetUsageCallback sets callback for resource usage updates
-	SetUsageCallback(callback ResourceUsageCallback)
-
-	// SetViolationCallback sets callback for limit violations
-	SetViolationCallback(callback ResourceViolationCallback)
-}
-
-// ResourceEnforcer applies and enforces resource limits
-type ResourceEnforcer interface {
-	// ApplyLimits applies resource limits to a process
-	ApplyLimits(pid int, limits *ResourceLimits) error
-
-	// EnforcePolicy executes the policy action for a limit violation
-	EnforcePolicy(pid int, violation *ResourceViolation) error
-
-	// SupportsLimitType checks if a limit type is supported on current platform
-	SupportsLimitType(limitType ResourceLimitType) bool
-}
+const (
+	ResourcePolicyNone             ResourcePolicy = "none"              // No action
+	ResourcePolicyLog              ResourcePolicy = "log"               // Log violation only
+	ResourcePolicyAlert            ResourcePolicy = "alert"             // Send alert/notification
+	ResourcePolicyThrottle         ResourcePolicy = "throttle"          // Suspend/resume process
+	ResourcePolicyGracefulShutdown ResourcePolicy = "graceful_shutdown" // SIGTERM then SIGKILL
+	ResourcePolicyImmediateKill    ResourcePolicy = "immediate_kill"    // SIGKILL immediately
+	ResourcePolicyRestart          ResourcePolicy = "restart"           // Restart with same/adjusted limits
+	ResourcePolicyRestartAdjusted  ResourcePolicy = "restart_adjusted"  // Restart with increased limits
+)
 
 // ResourceLimitType represents different types of resource limits
 type ResourceLimitType string
@@ -72,6 +47,45 @@ const (
 	ResourceLimitTypeNetwork ResourceLimitType = "network"
 	ResourceLimitTypeProcess ResourceLimitType = "process"
 )
+
+// ResourceViolation represents a resource limit violation
+type ResourceViolation struct {
+	LimitType    ResourceLimitType `json:"limit_type"`
+	CurrentValue interface{}       `json:"current_value"`
+	LimitValue   interface{}       `json:"limit_value"`
+	Severity     ViolationSeverity `json:"severity"`
+	Timestamp    time.Time         `json:"timestamp"`
+	Message      string            `json:"message"`
+}
+
+// ViolationSeverity indicates how severe a resource violation is
+type ViolationSeverity string
+
+const (
+	ViolationSeverityWarning  ViolationSeverity = "warning"
+	ViolationSeverityCritical ViolationSeverity = "critical"
+)
+
+// Callback function for handling resource usage updates
+type ResourceUsageCallback func(usage *ResourceUsage)
+
+// ResourceMonitor provides real-time resource usage monitoring
+type ResourceMonitor interface {
+	// Start begins resource monitoring
+	Start(ctx context.Context) error
+
+	// Stop stops resource monitoring
+	Stop()
+
+	// GetCurrentUsage returns current resource usage
+	GetCurrentUsage() (*ResourceUsage, error)
+
+	// GetUsageHistory returns historical usage data
+	GetUsageHistory(since time.Time) []*ResourceUsage
+
+	// SetUsageCallback sets callback for resource usage updates
+	SetUsageCallback(callback ResourceUsageCallback)
+}
 
 // ResourceUsage represents current resource usage
 type ResourceUsage struct {
@@ -101,37 +115,20 @@ type ResourceUsage struct {
 	NetworkBytesSent     int64 `json:"network_bytes_sent"`
 }
 
-// ResourceViolation represents a resource limit violation
-type ResourceViolation struct {
-	LimitType    ResourceLimitType `json:"limit_type"`
-	CurrentValue interface{}       `json:"current_value"`
-	LimitValue   interface{}       `json:"limit_value"`
-	Severity     ViolationSeverity `json:"severity"`
-	Timestamp    time.Time         `json:"timestamp"`
-	Message      string            `json:"message"`
+// ResourceEnforcer applies and enforces resource limits
+type ResourceEnforcer interface {
+	// ApplyLimits applies resource limits to a process
+	ApplyLimits(pid int, limits *ResourceLimits) error
+
+	// SupportsLimitType checks if a limit type is supported on current platform
+	SupportsLimitType(limitType ResourceLimitType) bool
 }
 
-// ViolationSeverity indicates how severe a resource violation is
-type ViolationSeverity string
-
-const (
-	ViolationSeverityWarning  ViolationSeverity = "warning"
-	ViolationSeverityCritical ViolationSeverity = "critical"
-)
-
-// ResourcePolicy defines what action to take when limits are violated
-type ResourcePolicy string
-
-const (
-	ResourcePolicyNone             ResourcePolicy = "none"              // No action
-	ResourcePolicyLog              ResourcePolicy = "log"               // Log violation only
-	ResourcePolicyAlert            ResourcePolicy = "alert"             // Send alert/notification
-	ResourcePolicyThrottle         ResourcePolicy = "throttle"          // Suspend/resume process
-	ResourcePolicyGracefulShutdown ResourcePolicy = "graceful_shutdown" // SIGTERM then SIGKILL
-	ResourcePolicyImmediateKill    ResourcePolicy = "immediate_kill"    // SIGKILL immediately
-	ResourcePolicyRestart          ResourcePolicy = "restart"           // Restart with same/adjusted limits
-	ResourcePolicyRestartAdjusted  ResourcePolicy = "restart_adjusted"  // Restart with increased limits
-)
+// ResourceViolationsChecker checks if resource limits are violated
+type ResourceViolationChecker interface {
+	// CheckViolations checks if resource limits are violated
+	CheckViolations(usage *ResourceUsage, limits *ResourceLimits) []*ResourceViolation
+}
 
 // ResourceLimits provides comprehensive resource limits with policies and monitoring
 type ResourceLimits struct {
@@ -209,27 +206,4 @@ type ResourceMonitoringConfig struct {
 	Interval         time.Duration `yaml:"interval,omitempty"`          // Monitoring interval
 	HistoryRetention time.Duration `yaml:"history_retention,omitempty"` // How long to keep history
 	AlertingEnabled  bool          `yaml:"alerting_enabled,omitempty"`  // Enable alerting
-
-	// Violation handling configuration
-	ViolationHandling ViolationHandlingMode `yaml:"violation_handling,omitempty"` // How to handle violations
 }
-
-// ViolationHandlingMode defines how resource violations are handled
-type ViolationHandlingMode string
-
-const (
-	// ViolationHandlingInternal uses the built-in resourceEnforcer for violation handling
-	// This is the default mode for backward compatibility
-	ViolationHandlingInternal ViolationHandlingMode = "internal"
-
-	// ViolationHandlingExternal delegates violation handling to external callbacks
-	// This mode is used when external systems (like ProcessControl) want to handle violations
-	ViolationHandlingExternal ViolationHandlingMode = "external"
-
-	// ViolationHandlingDisabled disables violation handling entirely (monitoring only)
-	ViolationHandlingDisabled ViolationHandlingMode = "disabled"
-)
-
-// Callback types
-type ResourceUsageCallback func(usage *ResourceUsage)
-type ResourceViolationCallback func(violation *ResourceViolation)

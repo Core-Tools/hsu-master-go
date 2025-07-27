@@ -2,10 +2,7 @@ package resourcelimits
 
 import (
 	"fmt"
-	"os"
 	"runtime"
-	"syscall"
-	"time"
 
 	"github.com/core-tools/hsu-master/pkg/logging"
 	"github.com/core-tools/hsu-master/pkg/processstate"
@@ -89,28 +86,6 @@ func (re *resourceEnforcer) ApplyLimits(pid int, limits *ResourceLimits) error {
 	return nil
 }
 
-// EnforcePolicy executes the policy action for a limit violation
-func (re *resourceEnforcer) EnforcePolicy(pid int, violation *ResourceViolation) error {
-	// Extract policy from violation context (would need to be enhanced)
-	// For now, we'll use a basic enforcement strategy
-
-	re.logger.Warnf("Enforcing policy for resource violation: %s", violation.Message)
-
-	switch violation.Severity {
-	case ViolationSeverityWarning:
-		// Just log warnings for now
-		re.logger.Warnf("Resource warning for PID %d: %s", pid, violation.Message)
-		return nil
-
-	case ViolationSeverityCritical:
-		// For critical violations, implement basic enforcement
-		return re.enforceCriticalViolation(pid, violation)
-
-	default:
-		return fmt.Errorf("unknown violation severity: %s", violation.Severity)
-	}
-}
-
 // SupportsLimitType checks if a limit type is supported on current platform
 func (re *resourceEnforcer) SupportsLimitType(limitType ResourceLimitType) bool {
 	switch runtime.GOOS {
@@ -179,49 +154,6 @@ func (re *resourceEnforcer) applyProcessLimits(pid int, limits *ProcessLimits) e
 
 	re.logger.Debugf("Process limits applied to PID %d", pid)
 	return nil
-}
-
-// enforceCriticalViolation handles critical resource violations
-func (re *resourceEnforcer) enforceCriticalViolation(pid int, violation *ResourceViolation) error {
-	re.logger.Errorf("Critical resource violation for PID %d: %s", pid, violation.Message)
-
-	// Basic enforcement: send SIGTERM then SIGKILL if necessary
-	// In a full implementation, this would be configurable based on the policy
-
-	// Check if process still exists
-	if !processstate.IsProcessRunning(pid) {
-		re.logger.Infof("Process %d no longer running, no enforcement needed", pid)
-		return nil
-	}
-
-	// Send SIGTERM first (graceful shutdown)
-	re.logger.Warnf("Sending SIGTERM to PID %d due to resource violation", pid)
-	if err := re.sendSignal(pid, syscall.SIGTERM); err != nil {
-		re.logger.Errorf("Failed to send SIGTERM to PID %d: %v", pid, err)
-	}
-
-	// Wait a bit for graceful shutdown
-	time.Sleep(5 * time.Second)
-
-	// Check if process is still running
-	if processstate.IsProcessRunning(pid) {
-		re.logger.Warnf("Process %d still running after SIGTERM, sending SIGKILL", pid)
-		if err := re.sendSignal(pid, syscall.SIGKILL); err != nil {
-			return fmt.Errorf("failed to send SIGKILL to PID %d: %v", pid, err)
-		}
-	}
-
-	return nil
-}
-
-// sendSignal sends a signal to a process (cross-platform wrapper)
-func (re *resourceEnforcer) sendSignal(pid int, sig os.Signal) error {
-	proc, err := os.FindProcess(pid)
-	if err != nil {
-		return fmt.Errorf("failed to find process %d: %v", pid, err)
-	}
-
-	return proc.Signal(sig)
 }
 
 // Platform-specific limit support checks

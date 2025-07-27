@@ -106,14 +106,6 @@ func (m *MockResourceLimitManager) Stop() {
 	m.Called()
 }
 
-func (m *MockResourceLimitManager) GetCurrentUsage() (*resourcelimits.ResourceUsage, error) {
-	args := m.Called()
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*resourcelimits.ResourceUsage), args.Error(1)
-}
-
 func (m *MockResourceLimitManager) GetViolations() []*resourcelimits.ResourceViolation {
 	args := m.Called()
 	if args.Get(0) == nil {
@@ -122,26 +114,8 @@ func (m *MockResourceLimitManager) GetViolations() []*resourcelimits.ResourceVio
 	return args.Get(0).([]*resourcelimits.ResourceViolation)
 }
 
-func (m *MockResourceLimitManager) IsMonitoringEnabled() bool {
-	args := m.Called()
-	return args.Bool(0)
-}
-
-func (m *MockResourceLimitManager) GetViolationHandlingMode() resourcelimits.ViolationHandlingMode {
-	args := m.Called()
-	return args.Get(0).(resourcelimits.ViolationHandlingMode)
-}
-
 func (m *MockResourceLimitManager) SetViolationCallback(callback resourcelimits.ResourceViolationCallback) {
 	m.Called(callback)
-}
-
-func (m *MockResourceLimitManager) GetLimits() *resourcelimits.ResourceLimits {
-	args := m.Called()
-	if args.Get(0) == nil {
-		return nil
-	}
-	return args.Get(0).(*resourcelimits.ResourceLimits)
 }
 
 // MockRestartCircuitBreaker for restart logic testing

@@ -1,5 +1,5 @@
 - per-worker logs files
-- re-use process helpers in resource enforcer
+- CheckInterval in XxxLimits is not used
 - unit tests for health check
 - unit tests for resource limits
 - unit tests for circuit breaker

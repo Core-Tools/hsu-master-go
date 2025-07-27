@@ -89,16 +89,6 @@ type ManagedProcessControlConfig struct {
 	// Resource management
 	Limits resourcelimits.ResourceLimits `yaml:"limits,omitempty"`
 
-	/*
-		// I/O handling
-		LogConfig      LogConfig
-		StdoutRedirect string
-		StderrRedirect string
-
-		// Scheduling
-		Schedule ScheduleConfig
-	*/
-
 	// Graceful shutdown
 	GracefulTimeout time.Duration `yaml:"graceful_timeout,omitempty"` // Time to wait for graceful shutdown
 }

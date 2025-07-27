@@ -102,7 +102,7 @@ func (pc *processControl) Restart(ctx context.Context) error {
 		return errors.NewProcessError("process not attached", nil)
 	}
 
-	return pc.restartInternal(ctx)
+	return pc.restartInternal(ctx, false) // normally, running process -> false
 }
 
 // GetState returns the current process state (for monitoring/debugging)
@@ -280,7 +280,7 @@ func (pc *processControl) startHealthCheck(ctx context.Context, pid int, healthC
 			wrappedRestart := func() error {
 				// Use a background context for restart since this is triggered by health failure
 				ctx := context.Background()
-				return pc.restartInternal(ctx)
+				return pc.restartInternal(ctx, true) // health check failed -> true
 			}
 			return pc.restartCircuitBreaker.ExecuteRestart(wrappedRestart)
 		})
@@ -304,31 +304,12 @@ func (pc *processControl) startHealthCheck(ctx context.Context, pid int, healthC
 
 // Initialize resource monitoring (internal - no validation)
 func (pc *processControl) startResourceMonitoring(ctx context.Context, pid int) (resourcelimits.ResourceLimitManager, error) {
-	if pc.config.Limits == nil {
-		return nil, errors.NewInternalError("no limits specified", nil).WithContext("id", pc.workerID)
-	}
-
 	pc.logger.Debugf("Initializing resource monitoring for worker %s, PID: %d", pc.workerID, pid)
-
-	// Configure limits for external violation handling
-	limits := pc.config.Limits
-	if limits.Monitoring == nil {
-		limits.Monitoring = &resourcelimits.ResourceMonitoringConfig{
-			Enabled:           true,
-			Interval:          30 * time.Second,
-			HistoryRetention:  24 * time.Hour,
-			AlertingEnabled:   true,
-			ViolationHandling: resourcelimits.ViolationHandlingExternal, // Use external handling for ProcessControl integration
-		}
-	} else {
-		// Override violation handling mode to external for ProcessControl integration
-		limits.Monitoring.ViolationHandling = resourcelimits.ViolationHandlingExternal
-	}
 
 	// Create resource limit manager
 	resourceManager := resourcelimits.NewResourceLimitManager(
 		pc.process.Pid,
-		limits,
+		pc.config.Limits,
 		pc.logger,
 	)
 
@@ -346,73 +327,49 @@ func (pc *processControl) startResourceMonitoring(ctx context.Context, pid int) 
 }
 
 // Handle resource violations by integrating with existing restart logic (internal)
-func (pc *processControl) handleResourceViolation(violation *resourcelimits.ResourceViolation) {
-	pc.logger.Warnf("Resource violation detected for worker %s: %s", pc.workerID, violation.Message)
+func (pc *processControl) handleResourceViolation(policy resourcelimits.ResourcePolicy, violation *resourcelimits.ResourceViolation) {
+	pc.logger.Warnf("Critical resource violation detected for worker %s: %s", pc.workerID, violation.Message)
 
-	// Handle different violation policies
-	switch violation.LimitType {
-	case resourcelimits.ResourceLimitTypeMemory:
-		if pc.config.Limits.Memory != nil {
-			pc.executeViolationPolicy(pc.config.Limits.Memory.Policy, violation)
-		}
-	case resourcelimits.ResourceLimitTypeCPU:
-		if pc.config.Limits.CPU != nil {
-			pc.executeViolationPolicy(pc.config.Limits.CPU.Policy, violation)
-		}
-	case resourcelimits.ResourceLimitTypeProcess:
-		if pc.config.Limits.Process != nil {
-			pc.executeViolationPolicy(pc.config.Limits.Process.Policy, violation)
-		}
-	default:
-		pc.logger.Warnf("Unknown resource violation type: %s", violation.LimitType)
-	}
-}
-
-// Execute violation policy actions (internal)
-func (pc *processControl) executeViolationPolicy(policy resourcelimits.ResourcePolicy, violation *resourcelimits.ResourceViolation) {
 	switch policy {
 	case resourcelimits.ResourcePolicyLog:
-		pc.logger.Warnf("Resource limit exceeded (policy: log): %s", violation.Message)
+		pc.logger.Warnf("LOG: Resource limit exceeded (policy: log): %s", violation.Message)
 
 	case resourcelimits.ResourcePolicyAlert:
 		pc.logger.Errorf("ALERT: Resource limit exceeded: %s", violation.Message)
 		// TODO: Integrate with alerting system when available
 
 	case resourcelimits.ResourcePolicyRestart:
-		pc.logger.Errorf("Resource limit exceeded, restarting process (policy: restart): %s", violation.Message)
-		// Use goroutine to avoid blocking resource monitoring, but use circuit breaker for consistency
-		go func() {
-			if pc.restartCircuitBreaker != nil {
-				// Use circuit breaker for consistent restart logic and protection against loops
-				wrappedRestart := func() error {
-					ctx := context.Background()
-					return pc.restartInternal(ctx)
-				}
-				if err := pc.restartCircuitBreaker.ExecuteRestart(wrappedRestart); err != nil {
-					pc.logger.Errorf("Failed to restart process after resource violation (circuit breaker): %v", err)
-				}
-			} else {
-				// Fallback if no circuit breaker (shouldn't happen in normal operation)
+		pc.logger.Errorf("RESTART: Resource limit exceeded, restarting process (policy: restart): %s", violation.Message)
+		// handleResourceViolation callback always runs in goroutine, use circuit breaker for consistency
+		if pc.restartCircuitBreaker != nil {
+			// Use circuit breaker for consistent restart logic and protection against loops
+			wrappedRestart := func() error {
 				ctx := context.Background()
-				if err := pc.restartInternal(ctx); err != nil {
-					pc.logger.Errorf("Failed to restart process after resource violation: %v", err)
-				}
+				return pc.restartInternal(ctx, false) // normally, running process -> false
 			}
-		}()
+			if err := pc.restartCircuitBreaker.ExecuteRestart(wrappedRestart); err != nil {
+				pc.logger.Errorf("Failed to restart process after resource violation (circuit breaker): %v", err)
+			}
+		} else {
+			// Fallback if no circuit breaker (shouldn't happen in normal operation)
+			ctx := context.Background()
+			err := pc.restartInternal(ctx, false) // normally, running process -> false
+			if err != nil {
+				pc.logger.Errorf("Failed to restart process after resource violation: %v", err)
+			}
+		}
 
 	case resourcelimits.ResourcePolicyGracefulShutdown:
-		pc.logger.Errorf("Resource limit exceeded, performing graceful shutdown (policy: graceful_shutdown): %s", violation.Message)
-		// ✅ SIMPLIFIED: Use unified termination method with graceful policy
-		go func() {
-			ctx := context.Background()
-			if err := pc.terminateProcessWithPolicy(ctx, resourcelimits.ResourcePolicyGracefulShutdown, violation.Message); err != nil {
-				pc.logger.Errorf("Failed to gracefully shutdown process after resource violation: %v", err)
-			}
-		}()
+		pc.logger.Errorf("GRACEFUL SHUTDOWN: Resource limit exceeded, performing graceful shutdown (policy: graceful_shutdown): %s", violation.Message)
+		// handleResourceViolation callback always runs in goroutine, use unified termination method with graceful policy
+		ctx := context.Background()
+		if err := pc.terminateProcessWithPolicy(ctx, resourcelimits.ResourcePolicyGracefulShutdown, violation.Message); err != nil {
+			pc.logger.Errorf("Failed to gracefully shutdown process after resource violation: %v", err)
+		}
 
 	case resourcelimits.ResourcePolicyImmediateKill:
-		pc.logger.Errorf("Resource limit exceeded, killing process immediately (policy: immediate_kill): %s", violation.Message)
-		// ✅ SIMPLIFIED: Use unified termination method with kill policy (synchronous for immediate response)
+		pc.logger.Errorf("IMMEDIATE KILL: Resource limit exceeded, killing process immediately (policy: immediate_kill): %s", violation.Message)
+		// handleResourceViolation callback always runs in goroutine, use unified termination method with kill policy
 		ctx := context.Background()
 		if err := pc.terminateProcessWithPolicy(ctx, resourcelimits.ResourcePolicyImmediateKill, violation.Message); err != nil {
 			pc.logger.Errorf("Failed to kill process after resource violation: %v", err)
@@ -472,11 +429,11 @@ func (pc *processControl) canStopFromState(currentState ProcessState) bool {
 }
 
 // restartInternal performs the actual restart without additional validation
-func (pc *processControl) restartInternal(ctx context.Context) error {
+func (pc *processControl) restartInternal(ctx context.Context, idDeadPID bool) error {
 	pc.logger.Infof("Restarting process control...")
 
 	// 1. Stop the current process (with state validation)
-	if err := pc.stopInternal(ctx, true); err != nil {
+	if err := pc.stopInternal(ctx, idDeadPID); err != nil {
 		pc.logger.Errorf("Failed to stop process during restart: %v", err)
 		return fmt.Errorf("failed to stop process during restart: %v", err)
 	}

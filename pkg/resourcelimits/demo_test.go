@@ -15,52 +15,6 @@ func (m *MockLogger) Errorf(format string, args ...interface{})               {}
 func (m *MockLogger) Debugf(format string, args ...interface{})               {}
 func (m *MockLogger) LogLevelf(level int, format string, args ...interface{}) {}
 
-func TestResourceLimitManager(t *testing.T) {
-	// Create sample resource limits
-	limits := &ResourceLimits{
-		Memory: &MemoryLimits{
-			MaxRSS:           512 * 1024 * 1024, // 512MB
-			WarningThreshold: 80.0,
-			Policy:           ResourcePolicyLog,
-			CheckInterval:    5 * time.Second,
-		},
-		CPU: &CPULimits{
-			MaxPercent:       50.0,
-			WarningThreshold: 80.0,
-			Policy:           ResourcePolicyThrottle,
-			CheckInterval:    5 * time.Second,
-		},
-		Process: &ProcessLimits{
-			MaxFileDescriptors: 100,
-			MaxChildProcesses:  5,
-			WarningThreshold:   90.0,
-			Policy:             ResourcePolicyAlert,
-			CheckInterval:      10 * time.Second,
-		},
-		Monitoring: &ResourceMonitoringConfig{
-			Enabled:         true,
-			Interval:        2 * time.Second,
-			AlertingEnabled: true,
-		},
-	}
-
-	logger := &MockLogger{}
-	manager := NewResourceLimitManager(os.Getpid(), limits, logger)
-	if !manager.IsMonitoringEnabled() {
-		t.Error("Expected monitoring to be enabled with limits")
-	}
-
-	// Test getting limits
-	retrievedLimits := manager.GetLimits()
-	if retrievedLimits == nil {
-		t.Error("Expected to retrieve limits")
-	}
-
-	if retrievedLimits.Memory.MaxRSS != 512*1024*1024 {
-		t.Errorf("Expected MaxRSS to be 512MB, got %d", retrievedLimits.Memory.MaxRSS)
-	}
-}
-
 func TestResourceMonitorCreation(t *testing.T) {
 	logger := &MockLogger{}
 
@@ -74,15 +28,6 @@ func TestResourceMonitorCreation(t *testing.T) {
 	monitor := NewResourceMonitor(os.Getpid(), config, logger)
 	if monitor == nil {
 		t.Error("Expected to create resource monitor")
-	}
-
-	// Test getting current usage (should work even without starting)
-	usage, err := monitor.GetCurrentUsage()
-	if err != nil {
-		t.Logf("Expected error getting usage without starting: %v", err)
-	} else if usage != nil {
-		t.Logf("Successfully got resource usage: Memory RSS: %dMB, CPU: %.1f%%",
-			usage.MemoryRSS/(1024*1024), usage.CPUPercent)
 	}
 }
 

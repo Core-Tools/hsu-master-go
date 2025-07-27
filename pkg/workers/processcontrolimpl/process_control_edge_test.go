@@ -177,7 +177,7 @@ func TestProcessControl_ErrorRecoveryScenarios(t *testing.T) {
 				}
 			}()
 			// This panics due to nil violation
-			impl.executeViolationPolicy(resourcelimits.ResourcePolicyLog, nil)
+			impl.handleResourceViolation(resourcelimits.ResourcePolicyLog, nil)
 		}()
 
 		// System should still be accessible after panic
@@ -278,7 +278,7 @@ func TestProcessControl_ResourceExhaustionHandling(t *testing.T) {
 		}
 
 		assert.NotPanics(t, func() {
-			impl.executeViolationPolicy(resourcelimits.ResourcePolicyLog, violation)
+			impl.handleResourceViolation(resourcelimits.ResourcePolicyLog, violation)
 		}, "Should handle violations gracefully without resource manager")
 	})
 

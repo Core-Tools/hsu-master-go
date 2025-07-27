@@ -533,7 +533,7 @@ func TestDeferOnlyLocking_UnifiedPolicyExecution(t *testing.T) {
 
 				// Should not panic and should handle policy correctly
 				assert.NotPanics(t, func() {
-					impl.executeViolationPolicy(policy, violation)
+					impl.handleResourceViolation(policy, violation)
 				}, "Policy execution should not panic for %s", policy)
 			})
 		}
@@ -571,7 +571,7 @@ func TestDeferOnlyLocking_ArchitecturalBenefits(t *testing.T) {
 
 		// This would panic in executeViolationPolicy with nil violation, but locks should still be released
 		assert.Panics(t, func() {
-			impl.executeViolationPolicy(resourcelimits.ResourcePolicyLog, nil)
+			impl.handleResourceViolation(resourcelimits.ResourcePolicyLog, nil)
 		}, "Should panic with nil violation")
 
 		// System should still be accessible (no deadlock)

@@ -158,7 +158,7 @@ func TestProcessControl_ResourceViolationPolicyExecution(t *testing.T) {
 
 			// Execute policy - should not panic
 			assert.NotPanics(t, func() {
-				impl.executeViolationPolicy(tt.policy, violation)
+				impl.handleResourceViolation(tt.policy, violation)
 			}, "Policy execution should not panic for %s", tt.description)
 
 			// Wait for async operations if needed
@@ -246,7 +246,7 @@ func TestProcessControl_ResourceViolationHandlerIntegration(t *testing.T) {
 
 			// Test the handler integration - should not panic
 			assert.NotPanics(t, func() {
-				impl.handleResourceViolation(violation)
+				impl.handleResourceViolation(tt.expectedPolicy, violation)
 			}, "Handler should not panic for %s", tt.description)
 
 			// Wait for async operations
@@ -285,7 +285,7 @@ func TestProcessControl_ResourceViolationWithoutCircuitBreaker(t *testing.T) {
 
 		// Should not panic even without circuit breaker
 		assert.NotPanics(t, func() {
-			impl.executeViolationPolicy(resourcelimits.ResourcePolicyRestart, violation)
+			impl.handleResourceViolation(resourcelimits.ResourcePolicyRestart, violation)
 		}, "Should handle restart policy gracefully without circuit breaker")
 
 		// Wait for async operation
@@ -322,7 +322,7 @@ func TestProcessControl_ResourcePolicyValidation(t *testing.T) {
 
 			// Should not panic for any policy
 			assert.NotPanics(t, func() {
-				impl.executeViolationPolicy(policy, violation)
+				impl.handleResourceViolation(policy, violation)
 			}, "Policy %s should not panic", policy)
 
 			// Wait for async operations
@@ -345,7 +345,7 @@ func TestProcessControl_ResourceViolationEdgeCases(t *testing.T) {
 		// Currently the code panics with nil violation - this test documents that behavior
 		// In the future, we might want to fix the code to handle nil gracefully
 		assert.Panics(t, func() {
-			impl.executeViolationPolicy(resourcelimits.ResourcePolicyLog, nil)
+			impl.handleResourceViolation(resourcelimits.ResourcePolicyLog, nil)
 		}, "Current implementation panics with nil violation - this test documents the behavior")
 	})
 
@@ -357,7 +357,7 @@ func TestProcessControl_ResourceViolationEdgeCases(t *testing.T) {
 		}
 
 		assert.NotPanics(t, func() {
-			impl.executeViolationPolicy(resourcelimits.ResourcePolicyLog, violation)
+			impl.handleResourceViolation(resourcelimits.ResourcePolicyLog, violation)
 		})
 	})
 
@@ -369,7 +369,7 @@ func TestProcessControl_ResourceViolationEdgeCases(t *testing.T) {
 		}
 
 		assert.NotPanics(t, func() {
-			impl.executeViolationPolicy(resourcelimits.ResourcePolicyLog, violation)
+			impl.handleResourceViolation(resourcelimits.ResourcePolicyLog, violation)
 		})
 	})
 }

@@ -28,7 +28,6 @@ type resourceMonitor struct {
 
 	// State
 	isRunning    bool
-	lastUsage    *ResourceUsage
 	usageHistory []*ResourceUsage
 
 	// Platform-specific monitor
@@ -142,13 +141,6 @@ func (rm *resourceMonitor) SetUsageCallback(callback ResourceUsageCallback) {
 	rm.usageCallback = callback
 }
 
-// SetViolationCallback sets callback for limit violations
-func (rm *resourceMonitor) SetViolationCallback(callback ResourceViolationCallback) {
-	rm.mutex.Lock()
-	defer rm.mutex.Unlock()
-	rm.violationCallback = callback
-}
-
 // monitorLoop is the main monitoring goroutine
 func (rm *resourceMonitor) monitorLoop() {
 	defer rm.wg.Done()
@@ -186,15 +178,17 @@ func (rm *resourceMonitor) collectUsage() {
 	rm.logger.Debugf("Resource usage for PID %d: Memory RSS: %dMB, CPU: %.1f%%, FDs: %d",
 		rm.pid, usage.MemoryRSS/(1024*1024), usage.CPUPercent, usage.OpenFileDescriptors)
 
+	var callback ResourceUsageCallback
+
 	// Store usage
 	rm.mutex.Lock()
-	rm.lastUsage = usage
 	rm.addToHistory(usage)
+	callback = rm.usageCallback
 	rm.mutex.Unlock()
 
 	// Call usage callback
-	if rm.usageCallback != nil {
-		rm.usageCallback(usage)
+	if callback != nil {
+		callback(usage)
 	}
 }
 
@@ -222,181 +216,4 @@ func (rm *resourceMonitor) GetUsageHistory(since time.Time) []*ResourceUsage {
 	}
 
 	return result
-}
-
-// CheckViolations checks for resource limit violations
-func (rm *resourceMonitor) CheckViolations(limits *ResourceLimits) []*ResourceViolation {
-	if rm.lastUsage == nil || limits == nil {
-		return nil
-	}
-
-	var violations []*ResourceViolation
-
-	// Check memory violations
-	if limits.Memory != nil {
-		violations = append(violations, rm.checkMemoryViolations(limits.Memory)...)
-	}
-
-	// Check CPU violations
-	if limits.CPU != nil {
-		violations = append(violations, rm.checkCPUViolations(limits.CPU)...)
-	}
-
-	// Check I/O violations
-	if limits.IO != nil {
-		violations = append(violations, rm.checkIOViolations(limits.IO)...)
-	}
-
-	// Check process violations
-	if limits.Process != nil {
-		violations = append(violations, rm.checkProcessViolations(limits.Process)...)
-	}
-
-	// Call violation callback for any violations
-	for _, violation := range violations {
-		if rm.violationCallback != nil {
-			rm.violationCallback(violation)
-		}
-	}
-
-	return violations
-}
-
-// checkMemoryViolations checks for memory limit violations
-func (rm *resourceMonitor) checkMemoryViolations(limits *MemoryLimits) []*ResourceViolation {
-	var violations []*ResourceViolation
-
-	usage := rm.lastUsage
-	now := time.Now()
-
-	// Check RSS limit
-	if limits.MaxRSS > 0 && usage.MemoryRSS > limits.MaxRSS {
-		violations = append(violations, &ResourceViolation{
-			LimitType:    ResourceLimitTypeMemory,
-			CurrentValue: usage.MemoryRSS,
-			LimitValue:   limits.MaxRSS,
-			Severity:     ViolationSeverityCritical,
-			Timestamp:    now,
-			Message:      fmt.Sprintf("Memory RSS (%d bytes) exceeds limit (%d bytes)", usage.MemoryRSS, limits.MaxRSS),
-		})
-	}
-
-	// Check virtual memory limit
-	if limits.MaxVirtual > 0 && usage.MemoryVirtual > limits.MaxVirtual {
-		violations = append(violations, &ResourceViolation{
-			LimitType:    ResourceLimitTypeMemory,
-			CurrentValue: usage.MemoryVirtual,
-			LimitValue:   limits.MaxVirtual,
-			Severity:     ViolationSeverityCritical,
-			Timestamp:    now,
-			Message:      fmt.Sprintf("Virtual memory (%d bytes) exceeds limit (%d bytes)", usage.MemoryVirtual, limits.MaxVirtual),
-		})
-	}
-
-	// Check warning threshold for RSS
-	if limits.WarningThreshold > 0 && limits.MaxRSS > 0 {
-		warningLimit := float64(limits.MaxRSS) * (limits.WarningThreshold / 100.0)
-		if float64(usage.MemoryRSS) > warningLimit {
-			violations = append(violations, &ResourceViolation{
-				LimitType:    ResourceLimitTypeMemory,
-				CurrentValue: usage.MemoryRSS,
-				LimitValue:   int64(warningLimit),
-				Severity:     ViolationSeverityWarning,
-				Timestamp:    now,
-				Message:      fmt.Sprintf("Memory RSS (%d bytes) exceeds warning threshold (%.0f bytes)", usage.MemoryRSS, warningLimit),
-			})
-		}
-	}
-
-	return violations
-}
-
-// checkCPUViolations checks for CPU limit violations
-func (rm *resourceMonitor) checkCPUViolations(limits *CPULimits) []*ResourceViolation {
-	var violations []*ResourceViolation
-
-	usage := rm.lastUsage
-	now := time.Now()
-
-	// Check CPU percentage limit
-	if limits.MaxPercent > 0 && usage.CPUPercent > limits.MaxPercent {
-		violations = append(violations, &ResourceViolation{
-			LimitType:    ResourceLimitTypeCPU,
-			CurrentValue: usage.CPUPercent,
-			LimitValue:   limits.MaxPercent,
-			Severity:     ViolationSeverityCritical,
-			Timestamp:    now,
-			Message:      fmt.Sprintf("CPU usage (%.1f%%) exceeds limit (%.1f%%)", usage.CPUPercent, limits.MaxPercent),
-		})
-	}
-
-	// Check CPU time limit
-	if limits.MaxTime > 0 && time.Duration(usage.CPUTime)*time.Second > limits.MaxTime {
-		violations = append(violations, &ResourceViolation{
-			LimitType:    ResourceLimitTypeCPU,
-			CurrentValue: usage.CPUTime,
-			LimitValue:   limits.MaxTime.Seconds(),
-			Severity:     ViolationSeverityCritical,
-			Timestamp:    now,
-			Message:      fmt.Sprintf("CPU time (%.1fs) exceeds limit (%v)", usage.CPUTime, limits.MaxTime),
-		})
-	}
-
-	// Check warning threshold
-	if limits.WarningThreshold > 0 && limits.MaxPercent > 0 {
-		warningLimit := limits.MaxPercent * (limits.WarningThreshold / 100.0)
-		if usage.CPUPercent > warningLimit {
-			violations = append(violations, &ResourceViolation{
-				LimitType:    ResourceLimitTypeCPU,
-				CurrentValue: usage.CPUPercent,
-				LimitValue:   warningLimit,
-				Severity:     ViolationSeverityWarning,
-				Timestamp:    now,
-				Message:      fmt.Sprintf("CPU usage (%.1f%%) exceeds warning threshold (%.1f%%)", usage.CPUPercent, warningLimit),
-			})
-		}
-	}
-
-	return violations
-}
-
-// checkIOViolations checks for I/O limit violations
-func (rm *resourceMonitor) checkIOViolations(limits *IOLimits) []*ResourceViolation {
-	var violations []*ResourceViolation
-	// TODO: Implement I/O rate checking (requires tracking rates over time)
-	return violations
-}
-
-// checkProcessViolations checks for process/file descriptor violations
-func (rm *resourceMonitor) checkProcessViolations(limits *ProcessLimits) []*ResourceViolation {
-	var violations []*ResourceViolation
-
-	usage := rm.lastUsage
-	now := time.Now()
-
-	// Check file descriptor limit
-	if limits.MaxFileDescriptors > 0 && usage.OpenFileDescriptors > limits.MaxFileDescriptors {
-		violations = append(violations, &ResourceViolation{
-			LimitType:    ResourceLimitTypeProcess,
-			CurrentValue: usage.OpenFileDescriptors,
-			LimitValue:   limits.MaxFileDescriptors,
-			Severity:     ViolationSeverityCritical,
-			Timestamp:    now,
-			Message:      fmt.Sprintf("Open file descriptors (%d) exceeds limit (%d)", usage.OpenFileDescriptors, limits.MaxFileDescriptors),
-		})
-	}
-
-	// Check child process limit
-	if limits.MaxChildProcesses > 0 && usage.ChildProcesses > limits.MaxChildProcesses {
-		violations = append(violations, &ResourceViolation{
-			LimitType:    ResourceLimitTypeProcess,
-			CurrentValue: usage.ChildProcesses,
-			LimitValue:   limits.MaxChildProcesses,
-			Severity:     ViolationSeverityCritical,
-			Timestamp:    now,
-			Message:      fmt.Sprintf("Child processes (%d) exceeds limit (%d)", usage.ChildProcesses, limits.MaxChildProcesses),
-		})
-	}
-
-	return violations
 }
