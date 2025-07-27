@@ -156,7 +156,6 @@ type MemoryLimits struct {
 	// Policy and monitoring
 	WarningThreshold float64        `yaml:"warning_threshold,omitempty"` // Warning threshold (0-100%)
 	Policy           ResourcePolicy `yaml:"policy,omitempty"`            // Action to take
-	CheckInterval    time.Duration  `yaml:"check_interval,omitempty"`    // How often to check
 }
 
 // CPULimits defines CPU-specific limits and policies (consolidated)
@@ -169,7 +168,6 @@ type CPULimits struct {
 	// Policy and monitoring
 	WarningThreshold float64        `yaml:"warning_threshold,omitempty"` // Warning threshold (0-100%)
 	Policy           ResourcePolicy `yaml:"policy,omitempty"`            // Action to take
-	CheckInterval    time.Duration  `yaml:"check_interval,omitempty"`    // How often to check
 }
 
 // IOLimits defines I/O-specific limits and policies (consolidated)
@@ -184,7 +182,6 @@ type IOLimits struct {
 	MaxWriteOps      int64          `yaml:"max_write_ops,omitempty"`     // Operations per second
 	WarningThreshold float64        `yaml:"warning_threshold,omitempty"` // Warning threshold (0-100%)
 	Policy           ResourcePolicy `yaml:"policy,omitempty"`            // Action to take
-	CheckInterval    time.Duration  `yaml:"check_interval,omitempty"`    // How often to check
 }
 
 // ProcessLimits defines process/file descriptor limits and policies (consolidated)
@@ -197,7 +194,6 @@ type ProcessLimits struct {
 	// Policy and monitoring
 	WarningThreshold float64        `yaml:"warning_threshold,omitempty"` // Warning threshold (0-100%)
 	Policy           ResourcePolicy `yaml:"policy,omitempty"`            // Action to take
-	CheckInterval    time.Duration  `yaml:"check_interval,omitempty"`    // How often to check
 }
 
 // ResourceMonitoringConfig defines monitoring behavior

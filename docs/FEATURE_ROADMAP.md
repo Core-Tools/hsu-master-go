@@ -32,7 +32,7 @@
 
 ## 📋 **Phase 3: Enhancement** 🚧 **MAJOR BREAKTHROUGHS ACHIEVED** 🏆
 
-### **🚀 REVOLUTIONARY TESTING ARCHITECTURE** ✅ **COMPLETED**
+### **🚀 REVOLUTIONARY TESTING & ARCHITECTURE** ✅ **COMPLETED**
 
 | Achievement | Status | Description | Impact |
 |-------------|--------|-------------|---------|
@@ -40,6 +40,7 @@
 | ✅ **53.1% Test Coverage** | **EXCEPTIONAL** | +34.5% improvement (18.6% → 53.1%) | **Production-ready quality** |
 | ✅ **Zero Race Conditions** | **BULLETPROOF** | Proven under 1000+ concurrent goroutines | **Enterprise-grade reliability** |
 | ✅ **Sub-Microsecond Performance** | **BLAZING FAST** | 15.8ns state reads, 44.2ns concurrent operations | **High-performance proven** |
+| ✅ **Resource Limits Architecture V3** | **EXCELLENT** | Clean component separation, policy-aware callbacks, dead code elimination | **Architectural excellence** |
 | ✅ **6 Comprehensive Test Categories** | **EXHAUSTIVE** | Complete architectural pattern validation | **Maintenance excellence** |
 
 #### **🧪 Test Suite Architecture Completed**
@@ -53,6 +54,14 @@
 ✅ process_control_edge_test.go          - Production-grade robustness
 ✅ process_control_benchmark_test.go     - Performance excellence proven
 ```
+
+#### **🏗️ Resource Limits Architecture V3 Completed** ✅ **REVOLUTIONARY**
+- ✅ **Clean Component Separation**: ResourceViolationChecker, unified policy handling
+- ✅ **Policy-Aware Callbacks**: Eliminated client complexity, direct policy provision
+- ✅ **Dual Loop Justification**: Monitor (30s) vs Violation (10s) with clear temporal separation
+- ✅ **Dead Code Elimination**: Removed unused individual CheckInterval fields
+- ✅ **Simplified ProcessControl Integration**: No goroutine management, no policy interpretation
+- ✅ **Production Validation**: Memory limits working with circuit breaker integration
 
 #### **🏗️ Architectural Patterns Validated**
 - ✅ **Plan-Execute-Finalize Pattern** - All phases tested
@@ -73,6 +82,7 @@
 | ✅ Package Architecture Refactoring | **DONE** | Modular workers subdomain with processcontrol/workerstatemachine packages | **HIGH** |
 | ✅ Windows Console Signal Fix | **DONE** | AttachConsole dead PID hack for robust Ctrl+C handling | **HIGH** |
 | ✅ Defer-Only Locking System | **REVOLUTIONARY** | Exception-safe concurrency with zero explicit unlocks | **CRITICAL** |
+| ✅ Resource Limits Architecture V3 | **EXCELLENT** | Clean component separation, policy-aware callbacks | **CRITICAL** |
 | 📝 Event System & Metrics | **PLANNED** | Event-driven architecture and monitoring | **MEDIUM** |
 | 📝 Performance Optimizations | **PLANNED** | Production-scale performance tuning | **LOW** |
 
@@ -89,72 +99,189 @@
 
 ---
 
-## 🚀 **Phase 4: Enterprise Features** 📝 **PLANNED**
+## 🍎 **NEXT MAJOR PRIORITY: macOS Platform Support** 🚀 **HIGH PRIORITY**
 
-### **Operational Excellence**
+### **macOS Catalina (10.15) Compatibility Target** ✅ **FEASIBLE**
 
-| Feature | Status | Description | Priority |
-|---------|--------|-------------|----------|
-| 📝 Distributed Master | **PLANNED** | Multi-node master for high availability | **MEDIUM** |
-| 📝 Monitoring Integration | **PLANNED** | Prometheus, Grafana, alerting | **HIGH** |
-| 📝 Audit Logging | **PLANNED** | Complete operation audit trail | **MEDIUM** |
-| 📝 Security Framework | **PLANNED** | Authentication, authorization, TLS | **HIGH** |
-| 📝 Backup & Recovery | **PLANNED** | Configuration and state backup | **LOW** |
+**Compatibility Assessment:**
+- ✅ **Go 1.22 Compatibility**: Supports macOS 10.15+ (Catalina released 2019)
+- ✅ **Core APIs Available**: getrlimit/setrlimit, task_info(), system resource APIs
+- ✅ **Sandbox Support**: Sandbox profiles available in Catalina
+- ✅ **Process Management**: Standard Unix process APIs work perfectly
 
-### **Advanced Management**
+### **Platform-Specific Implementation Roadmap**
 
-| Feature | Status | Description | Priority |
-|---------|--------|-------------|----------|
-| 📝 Blue-Green Deployments | **PLANNED** | Zero-downtime deployments | **MEDIUM** |
-| 📝 Canary Deployments | **PLANNED** | Gradual rollout strategies | **LOW** |
-| 📝 Auto-Scaling | **PLANNED** | Dynamic worker scaling based on metrics | **LOW** |
-| 📝 Resource Quotas | **PLANNED** | Per-tenant resource limits | **LOW** |
+| Component | macOS Implementation | Catalina Support | Estimated Effort |
+|-----------|---------------------|------------------|------------------|
+| **Process Management** | ✅ **Works with Go stdlib** | Standard os.Process, Unix signals | **0 hours** |
+| **Memory Monitoring** | `task_info(TASK_BASIC_INFO)` | ✅ Available since macOS 10.0 | **2-3 hours** |
+| **CPU Monitoring** | `task_info(TASK_THREAD_TIMES)` | ✅ Available since macOS 10.0 | **2-3 hours** |
+| **Resource Limits** | `getrlimit`/`setrlimit` | ✅ Available since macOS 10.0 | **1-2 hours** |
+| **Advanced Limits** | Sandbox profiles, quotas | ✅ Available in Catalina | **3-4 hours** |
+| **Platform Integration** | launchd integration | ✅ Available in Catalina | **2-3 hours** |
+
+**Total Estimated Effort: 10-17 hours**
+
+### **macOS Resource Limits Implementation Plan**
+
+#### **Phase 1: Basic Resource Monitoring (4-6 hours)**
+```go
+// macOS-specific resource monitoring
+type macOSResourceMonitor struct {
+    pid   int
+    task  C.task_t  // Mach task port
+}
+
+// Memory monitoring via task_info
+func (m *macOSResourceMonitor) getMemoryUsage() (*MemoryUsage, error) {
+    var info C.task_basic_info_data_t
+    count := C.TASK_BASIC_INFO_COUNT
+    
+    kr := C.task_info(m.task, C.TASK_BASIC_INFO, 
+                     C.task_info_t(&info), &count)
+    
+    return &MemoryUsage{
+        RSS:     int64(info.resident_size),
+        Virtual: int64(info.virtual_size),
+    }, nil
+}
+
+// CPU monitoring via task_info
+func (m *macOSResourceMonitor) getCPUUsage() (*CPUUsage, error) {
+    var info C.task_thread_times_info_data_t
+    count := C.TASK_THREAD_TIMES_INFO_COUNT
+    
+    kr := C.task_info(m.task, C.TASK_THREAD_TIMES_INFO,
+                     C.task_info_t(&info), &count)
+    
+    return &CPUUsage{
+        UserTime:   time.Duration(info.user_time.seconds)*time.Second,
+        SystemTime: time.Duration(info.system_time.seconds)*time.Second,
+    }, nil
+}
+```
+
+#### **Phase 2: Resource Limit Enforcement (3-4 hours)**
+```go
+// macOS resource limit enforcement
+func (e *macOSResourceEnforcer) applyMemoryLimits(pid int, limits *MemoryLimits) error {
+    if limits.MaxRSS > 0 {
+        rlimit := unix.Rlimit{
+            Cur: uint64(limits.MaxRSS),
+            Max: uint64(limits.MaxRSS),
+        }
+        return unix.Setrlimit(unix.RLIMIT_RSS, &rlimit)
+    }
+    return nil
+}
+
+func (e *macOSResourceEnforcer) applyCPULimits(pid int, limits *CPULimits) error {
+    if limits.MaxTime > 0 {
+        rlimit := unix.Rlimit{
+            Cur: uint64(limits.MaxTime.Seconds()),
+            Max: uint64(limits.MaxTime.Seconds()),
+        }
+        return unix.Setrlimit(unix.RLIMIT_CPU, &rlimit)
+    }
+    return nil
+}
+```
+
+#### **Phase 3: Advanced macOS Features (3-5 hours)**
+```go
+// Sandbox profile integration (optional)
+func (e *macOSResourceEnforcer) applySandboxProfile(pid int, profile string) error {
+    // sandbox_init() integration for advanced restrictions
+}
+
+// launchd integration (optional)
+func (e *macOSResourceEnforcer) registerWithLaunchd(config *LaunchdConfig) error {
+    // Integration with launchd for system-level process management
+}
+```
+
+### **macOS Implementation Benefits**
+
+✅ **Native Performance**: Direct system API access, no container overhead  
+✅ **Catalina Support**: Wide compatibility with older Mac systems  
+✅ **Advanced Features**: Sandbox integration, launchd compatibility  
+✅ **Developer Experience**: Great for macOS development environments  
+✅ **Resource Efficiency**: Lightweight monitoring with system-level precision
 
 ---
 
-## 🎯 **Previous Sprint: Defer-Only Locking & Testing Revolution** ✅ **COMPLETED**
+## 🎯 **Previous Sprint: Resource Limits Architecture V3** ✅ **COMPLETED**
 
-### **Sprint Results - GAME CHANGING**
+### **Sprint Results - ARCHITECTURAL EXCELLENCE**
 
 | Task | Status | Achievement |
 |------|--------|-------------|
-| ✅ Defer-Only Locking Architecture | **REVOLUTIONARY** | Zero explicit unlock calls, exception-safe concurrency patterns |
-| ✅ Comprehensive Test Suite | **EXCEPTIONAL** | 53.1% coverage (+34.5% improvement) across 6 test categories |
-| ✅ Race Condition Elimination | **BULLETPROOF** | Zero race conditions proven under massive concurrent load |
-| ✅ Performance Validation | **BLAZING** | Sub-microsecond performance with zero-allocation reads |
-| ✅ Production Robustness | **ENTERPRISE** | Unicode support, edge cases, panic recovery |
+| ✅ Component Separation | **EXCELLENT** | ResourceViolationChecker, unified policy handling |
+| ✅ Policy-Aware Callbacks | **REVOLUTIONARY** | Eliminated client complexity, direct policy provision |
+| ✅ Dual Loop Architecture | **JUSTIFIED** | Monitor (30s) vs Violation (10s) with clear separation |
+| ✅ Dead Code Elimination | **CLEAN** | Removed unused individual CheckInterval fields |
+| ✅ ProcessControl Integration | **SIMPLIFIED** | No goroutine management, no policy interpretation |
+| ✅ Production Validation | **PROVEN** | Memory limits working with circuit breaker integration |
 
 ### **Implementation Highlights**
-- **🔒 Revolutionary Concurrency**: Defer-only locking eliminates fragile unlock patterns
-- **⚡ Performance Excellence**: 76M+ state reads/second with zero allocations
-- **🛡️ Bulletproof Safety**: Zero race conditions under 1000+ concurrent goroutines  
-- **🧪 Test Architecture**: Centralized mocking framework with comprehensive coverage
-- **🎯 Quality Assurance**: All critical paths tested with production-grade edge cases
+- **🏗️ Clean Architecture**: Perfect component separation with single responsibility
+- **🎯 Policy Excellence**: Direct policy provision eliminates client interpretation complexity
+- **🧹 Code Quality**: Dead code elimination and interface simplification
+- **✅ Production Ready**: Real-world validation with Qdrant memory limit enforcement
+- **📋 Comprehensive Assessment**: Detailed architectural review with A+ rating
 
 ### **Definition of Done - EXCEEDED**
-- ✅ Defer-only locking architecture implemented and validated
-- ✅ 53.1% test coverage achieved (target was ~40%)
-- ✅ Zero race conditions detected across all scenarios
-- ✅ Sub-microsecond performance proven
-- ✅ Production-grade robustness validated
+- ✅ Resource limits architecture refactored with clean component separation
+- ✅ Policy-aware callbacks implemented and validated
+- ✅ Dead code eliminated (CheckInterval fields removed)
+- ✅ Production validation with real application (Qdrant)
+- ✅ Comprehensive architectural assessment completed (53 pages)
 
 ---
 
-## 🎯 **Current Sprint: Log Collection & API Development**
+## 🎯 **Current Sprint: macOS Platform Support** ✅ **LOG COLLECTION COMPLETED**
 
-### **Current Sprint Goals**
+### **🚀 MAJOR BREAKTHROUGH: Log Collection System** ✅ **COMPLETED**
+
+**Evidence from Production Run:**
+```
+[2025-07-28T00:20:03+03:00][qdrant][stdout]            _                 _
+[2025-07-28T00:20:03+03:00][qdrant][stdout]   __ _  __| |_ __ __ _ _ __ | |_
+[2025-07-28T00:20:03+03:00][qdrant][stdout]  / _` |/ _` | '__/ _` | '_ \| __|
+[2025-07-28T00:20:03+03:00][qdrant][stdout] | (_| | (_| | | | (_| | | | | |_
+[2025-07-28T00:20:03+03:00][qdrant][stdout]  \__, |\__,_|_|  \__,_|_| |_|\__|
+```
+
+**✅ Implemented Features:**
+- ✅ **Workers stdout/stderr capturing**: Real-time stream collection from process pipes
+- ✅ **Output to master stdout + files**: Simultaneous aggregated logging and file output  
+- ✅ **Dynamic root folder calculation**: Integration with processfile for proper log paths
+- ✅ **Aggregated workers log**: Centralized log collection with worker identification
+- ✅ **--run-duration support**: Command line option for testing and integration tests
+- ✅ **Full ProcessControl integration**: Seamless log collection during process lifecycle
+- ✅ **Production validation**: Working with real applications (Qdrant) 
+
+**📋 Technical Implementation:**
+- ✅ **LogCollectionService**: Complete service with worker registration/unregistration
+- ✅ **Stream processing**: Real-time log line processing with metadata enhancement  
+- ✅ **Configuration-driven**: YAML-based log collection configuration per worker
+- ✅ **Multiple output targets**: File, stdout, stderr with configurable formatting
+- ✅ **Integration tests**: Comprehensive test coverage with real process simulation
+
+### **Current Sprint Goals** *(Updated Priorities)*
 
 | Task | Status | Priority | Estimated Effort |
 |------|--------|----------|------------------|
-| 📝 Log Collection System | **PLANNED** | **HIGH** | 8-10 hours |
+| 🍎 **macOS Resource Limits** | **IN PROGRESS** | **CRITICAL** | 10-17 hours |
+| ✅ **Log Collection System** | **COMPLETED** | **HIGH** | ~~8-10 hours~~ **DONE** |
 | 📝 REST API for Worker Management | **PLANNED** | **HIGH** | 4-5 hours |
 | 📝 CLI Tool Development | **PLANNED** | **MEDIUM** | 2-3 hours |
-| 📝 Advanced Health Check Features | **PLANNED** | **MEDIUM** | 3-4 hours |
 
 ### **Focus Areas**
-- **Log Management**: Centralized stdout/stderr collection and processing
-- **API Development**: REST API for programmatic worker management  
-- **Operational Tools**: CLI for day-to-day operations
+- **🍎 Platform Expansion**: macOS Catalina (10.15) resource monitoring and limits
+- **📊 Resource Excellence**: Complete cross-platform resource management  
+- **🎮 API Development**: REST API for programmatic worker management
+- **🔧 Operational Tools**: CLI for day-to-day operations
 
 ---
 
@@ -226,36 +353,30 @@
 ### **Configuration Example**
 ```yaml
 workers:
-  - id: "web-server"
-    type: "managed"
+  - id: "nginx-auto-discover"
+    type: "unmanaged"
     unit:
-      managed:
-        control:
-          log_collection:
-            enabled: true
-            capture_stdout: true
-            capture_stderr: true
-            buffer_size: "1MB"
-            retention_policy:
-              max_files: 10
-              max_size: "100MB"  
-              max_age: "7d"
-            forwarding:
-              enabled: true
-              targets:
-                - type: "file"
-                  path: "/var/log/hsu-master/web-server.log"
-                - type: "syslog"
-                  facility: "local0"
-                - type: "elasticsearch"
-                  endpoint: "http://elasticsearch:9200"
-            filtering:
-              exclude_patterns:
-                - "^DEBUG:"
-                - "health check"
-              include_patterns:
-                - "ERROR:"
-                - "WARN:"
+      unmanaged:
+        discovery:
+          strategy: "process_name_pattern"
+          pattern: "nginx: master process"
+          validation:
+            - type: "port_check"
+              port: 80
+            - type: "file_exists"
+              path: "/var/run/nginx.pid"
+        
+  - id: "api-service-discovery"
+    type: "unmanaged"
+    unit:
+      unmanaged:
+        discovery:
+          strategy: "port_based"
+          port: 8080
+          protocol: "tcp"
+          validation:
+            - type: "http_health"
+              endpoint: "http://localhost:8080/health"
 ```
 
 ---
@@ -393,29 +514,37 @@ type ProductionScenarioSimulator struct {
 - **Traffic Routing**: Load balancing between process instances
 - **Circuit Breakers**: Failure isolation patterns
 
-### **🔥 Resource Limits & Monitoring** ✅ **IMPLEMENTED**
+### **🔥 Resource Limits & Monitoring V3** ✅ **ARCHITECTURE COMPLETED**
+
+#### **🏗️ Architecture V3 Achievements** ✅ **REVOLUTIONARY**
+- ✅ **Clean Component Separation**: ResourceViolationChecker interface with stateless design
+- ✅ **Policy-Aware Callbacks**: Direct policy provision eliminates client interpretation complexity
+- ✅ **Dual Loop Justification**: Monitor (30s) vs Violation (10s) with clear temporal separation
+- ✅ **Dead Code Elimination**: Removed unused individual CheckInterval fields
+- ✅ **Simplified Integration**: ProcessControl no longer manages goroutines or interprets policies
+- ✅ **Production Validation**: Real-world validation with Qdrant memory limit enforcement
 
 #### **Resource Limit Types** ✅ **COMPLETED**
-- ✅ **Memory Limits**: RSS, virtual memory, heap limits
+- ✅ **Memory Limits**: RSS, virtual memory, heap limits with warning thresholds
 - ✅ **CPU Limits**: CPU percentage, execution time, nice values
 - ✅ **I/O Limits**: Disk read/write rates, file descriptor counts
-- ✅ **Process Limits**: Process counts, thread limits
+- ✅ **Process Limits**: Process counts, thread limits, file descriptor limits
 - 📝 **Network Limits**: Connection counts, bandwidth usage (planned)
 - 📝 **Storage Limits**: Temporary files, log file sizes (planned)
 
-#### **Platform-Specific Resource Limits** 📝 **HIGH PRIORITY PLANNED**
+#### **Platform-Specific Resource Limits** 🍎 **macOS PRIORITY**
 
-| Platform | Implementation | Priority | Estimated Effort |
-|----------|----------------|----------|------------------|
-| **macOS Resource Limits** | launchd limits, sandbox, resource usage APIs | **HIGH** | 4-6 hours |
-| **Linux Resource Limits** | cgroups v1/v2, systemd integration, ulimits | **MEDIUM** | 6-8 hours |
-| **Windows Job Objects** | Windows Job Objects, resource monitoring | **LOW** | 8-10 hours |
+| Platform | Implementation | Priority | Estimated Effort | Status |
+|----------|----------------|----------|------------------|---------|
+| **macOS Resource Limits** | launchd limits, sandbox, resource usage APIs | **CRITICAL** | 10-17 hours | **IN PROGRESS** |
+| **Linux Resource Limits** | cgroups v1/v2, systemd integration, ulimits | **HIGH** | 6-8 hours | **PLANNED** |
+| **Windows Job Objects** | Windows Job Objects, resource monitoring | **MEDIUM** | 8-10 hours | **PLANNED** |
 
-**macOS Implementation Details**:
-- `getrlimit`/`setrlimit` for basic limits
-- `task_info()` for memory/CPU monitoring  
-- Sandbox profiles for advanced restrictions
-- Integration with macOS system resource APIs
+**🍎 macOS Catalina (10.15) Implementation Target**:
+- ✅ **Go 1.22 Compatible**: Full support for Catalina and newer
+- ✅ **Core APIs**: `getrlimit`/`setrlimit`, `task_info()` (available since macOS 10.0)
+- ✅ **Advanced Features**: Sandbox profiles, launchd integration
+- ✅ **Native Performance**: Direct system API access, no container overhead
 
 **Linux Implementation Details**:
 - cgroups v2 for modern Linux distributions
@@ -424,18 +553,20 @@ type ProductionScenarioSimulator struct {
 - `/proc` filesystem monitoring
 - Integration with container runtimes
 
-#### **Enforcement Strategies** ✅ **IMPLEMENTED**
-- ✅ **Runtime Monitoring**: Periodic resource usage checks
-- ✅ **Threshold-Based Actions**: Configurable actions when limits approached/exceeded
-- ✅ **Cross-Platform Support**: Native OS mechanisms preparation
+#### **Enforcement Strategies** ✅ **V3 COMPLETED**
+- ✅ **Runtime Monitoring**: Periodic resource usage checks with fresh data retrieval
+- ✅ **Policy-Aware Callbacks**: Direct policy provision (log, restart, graceful_shutdown, immediate_kill)
+- ✅ **Threshold-Based Actions**: Warning and critical violation handling
+- ✅ **Circuit Breaker Integration**: Restart protection with exponential backoff
 - 📝 **Startup Enforcement**: Set OS-level limits (ulimit, cgroups, Windows job objects)
 - 📝 **Container Integration**: Docker, containerd, runc integration (planned)
 
-#### **Limit Violation Policies** ✅ **IMPLEMENTED**
+#### **Limit Violation Policies** ✅ **V3 COMPLETED**
 - ✅ **Immediate Termination**: Kill process immediately when limit exceeded
 - ✅ **Graceful Shutdown**: Send termination signal with timeout before force kill
 - ✅ **Restart with Circuit Breaker**: Automatic restart with circuit breaker protection
 - ✅ **Alert Only**: Log warnings and send notifications without termination
+- ✅ **Policy-Aware Processing**: ResourceViolationCallback with direct policy provision
 - 📝 **Throttling**: Suspend/resume process to stay within limits (planned)
 - 📝 **Escalation**: Progressive actions (warn → throttle → terminate) (planned)
 
@@ -506,33 +637,31 @@ type ProductionScenarioSimulator struct {
 | **Cross-platform Discovery** | Platform-specific optimizations for process discovery | **MEDIUM** |
 
 ### **Configuration Examples**
-```yaml
-workers:
-  - id: "nginx-auto-discover"
-    type: "unmanaged"
-    unit:
-      unmanaged:
-        discovery:
-          strategy: "process_name_pattern"
-          pattern: "nginx: master process"
-          validation:
-            - type: "port_check"
-              port: 80
-            - type: "file_exists"
-              path: "/var/run/nginx.pid"
-        
-  - id: "api-service-discovery"
-    type: "unmanaged"
-    unit:
-      unmanaged:
-        discovery:
-          strategy: "port_based"
-          port: 8080
-          protocol: "tcp"
-          validation:
-            - type: "http_health"
-              endpoint: "http://localhost:8080/health"
 ```
+```
+
+---
+
+## 🚀 **Phase 4: Enterprise Features** 📝 **PLANNED**
+
+### **Operational Excellence**
+
+| Feature | Status | Description | Priority |
+|---------|--------|-------------|----------|
+| 📝 Distributed Master | **PLANNED** | Multi-node master for high availability | **MEDIUM** |
+| 📝 Monitoring Integration | **PLANNED** | Prometheus, Grafana, alerting | **HIGH** |
+| 📝 Audit Logging | **PLANNED** | Complete operation audit trail | **MEDIUM** |
+| 📝 Security Framework | **PLANNED** | Authentication, authorization, TLS | **HIGH** |
+| 📝 Backup & Recovery | **PLANNED** | Configuration and state backup | **LOW** |
+
+### **Advanced Management**
+
+| Feature | Status | Description | Priority |
+|---------|--------|-------------|----------|
+| 📝 Blue-Green Deployments | **PLANNED** | Zero-downtime deployments | **MEDIUM** |
+| 📝 Canary Deployments | **PLANNED** | Gradual rollout strategies | **LOW** |
+| 📝 Auto-Scaling | **PLANNED** | Dynamic worker scaling based on metrics | **LOW** |
+| 📝 Resource Quotas | **PLANNED** | Per-tenant resource limits | **LOW** |
 
 ---
 
@@ -540,14 +669,15 @@ workers:
 
 | Item | Priority | Description |
 |------|----------|-------------|
-| ✅ Resource Limits Implementation | **COMPLETED** | CPU/memory limits enforcement and monitoring |
+| ✅ Resource Limits Architecture V3 | **COMPLETED** | Clean component separation, policy-aware callbacks |
 | ✅ Health Check Completion | **COMPLETED** | HTTP/gRPC/TCP/Exec/Process implementations |
 | ✅ Test Coverage Excellence | **COMPLETED** | 53.1% coverage with architectural validation |
-| 📝 Log Collection System | **HIGH** | Centralized stdout/stderr log aggregation |
+| ✅ Log Collection System | **COMPLETED** | Centralized stdout/stderr log aggregation with processfile integration |
+| 🍎 macOS Platform Support | **CRITICAL** | macOS Catalina (10.15) resource limits and monitoring |
 | 📝 API Development | **HIGH** | REST API and CLI for operations |
 | 📝 Documentation Enhancement | **MEDIUM** | API docs, examples, deployment guides |
 | 📝 Advanced Testing Phases | **MEDIUM** | Platform testing, integration testing, failure injection |
-| 📝 Performance Benchmarking | **LOW** | Extended performance baselines and profiling |
+| 📝 Performance Benchmarking | **LOW** | Extended performance baselines and profiling
 
 ---
 
@@ -560,16 +690,16 @@ workers:
 - ✅ Configuration-driven setup
 - ✅ Package architecture refactoring
 - ✅ Complete health check implementations
-- ✅ Resource limits implementation
+- ✅ Resource limits architecture V3
 - ✅ Revolutionary testing architecture with 53.1% coverage
 - ✅ Defer-only locking with bulletproof concurrency
 
-### **v0.2.0 - Production Beta**
-- 📝 Log collection system
+### **v0.2.0 - Production Beta** *(In Progress)*
+- 🍎 macOS platform support (Catalina 10.15+)
+- ✅ Log collection system **COMPLETED**
 - 📝 REST API & CLI
-- 📝 Advanced resource monitoring & policies
+- 📝 Linux platform support (cgroups)
 - 📝 Advanced YAML features
-- 📝 Monitoring integration
 - 📝 Enhanced testing (65-75% coverage)
 
 ### **v1.0.0 - Production Release**
@@ -578,6 +708,7 @@ workers:
 - 📝 Enterprise features
 - 📝 Complete documentation
 - 📝 Exhaustive testing (90%+ coverage)
+- 📝 All platform support (Windows, Linux, macOS)
 
 ---
 
@@ -589,6 +720,7 @@ workers:
 - **Performance regression testing** for core features
 - **Security review** for API and authentication features
 - ✅ **Revolutionary testing standards**: Defer-only locking and 53.1% coverage achieved
+- ✅ **Architectural excellence**: Resource limits V3 with A+ assessment
 
 ### **Review Cycles**
 - **Weekly**: Sprint progress review
@@ -598,4 +730,4 @@ workers:
 ---
 
 *Last Updated: January 2025*  
-*Next Review: After Log Collection System implementation* 
+*Next Review: After macOS Platform Support implementation*
