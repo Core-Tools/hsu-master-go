@@ -184,10 +184,8 @@ func TestProcessControlIntegrationPattern(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 	require.Equal(t, 2, len(receivedPolicies), "Expected 2 policies handled, got %d", len(receivedPolicies))
-	assert.Equal(t, ResourcePolicyRestart, receivedPolicies[0])
-	assert.Equal(t, ResourcePolicyGracefulShutdown, receivedPolicies[1])
+	assert.EqualValues(t, []ResourcePolicy{ResourcePolicyRestart, ResourcePolicyGracefulShutdown}, receivedPolicies)
 
 	require.Equal(t, 2, len(receivedViolations), "Expected 2 violations handled, got %d", len(receivedViolations))
-	assert.Equal(t, "Memory limit exceeded", receivedViolations[0].Message)
-	assert.Equal(t, "CPU limit exceeded", receivedViolations[1].Message)
+	assert.EqualValues(t, []string{"Memory limit exceeded", "CPU limit exceeded"}, []string{receivedViolations[0].Message, receivedViolations[1].Message})
 }
