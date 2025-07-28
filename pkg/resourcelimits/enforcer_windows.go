@@ -11,6 +11,18 @@ import (
 	"github.com/core-tools/hsu-master/pkg/logging"
 )
 
+// Platform-specific limit support checks
+func supportsLimitTypeImpl(limitType ResourceLimitType) bool {
+	switch limitType {
+	case ResourceLimitTypeMemory, ResourceLimitTypeCPU:
+		return true // Windows supports these via Job Objects
+	case ResourceLimitTypeProcess:
+		return true // Partial support
+	default:
+		return false
+	}
+}
+
 // Windows Job Object constants
 const (
 	JOB_OBJECT_LIMIT_WORKINGSET                 = 0x00000001
@@ -97,8 +109,8 @@ func newWindowsResourceEnforcer(logger logging.Logger) *windowsResourceEnforcer 
 	}
 }
 
-// applyWindowsMemoryLimitsImpl applies memory limits using Job Objects (implementation)
-func applyWindowsMemoryLimitsImpl(pid int, limits *MemoryLimits, logger logging.Logger) error {
+// applyMemoryLimitsImpl applies memory limits using Job Objects (implementation)
+func applyMemoryLimitsImpl(pid int, limits *MemoryLimits, logger logging.Logger) error {
 	enforcer := newWindowsResourceEnforcer(logger)
 
 	// Create or get existing job object
@@ -143,8 +155,8 @@ func applyWindowsMemoryLimitsImpl(pid int, limits *MemoryLimits, logger logging.
 	return nil
 }
 
-// applyWindowsCPULimitsImpl applies CPU limits using Job Objects (implementation)
-func applyWindowsCPULimitsImpl(pid int, limits *CPULimits, logger logging.Logger) error {
+// applyCPULimitsImpl applies CPU limits using Job Objects (implementation)
+func applyCPULimitsImpl(pid int, limits *CPULimits, logger logging.Logger) error {
 	enforcer := newWindowsResourceEnforcer(logger)
 
 	// Create or get existing job object

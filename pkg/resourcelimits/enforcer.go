@@ -2,7 +2,6 @@ package resourcelimits
 
 import (
 	"fmt"
-	"runtime"
 
 	"github.com/core-tools/hsu-master/pkg/logging"
 	"github.com/core-tools/hsu-master/pkg/processstate"
@@ -88,17 +87,7 @@ func (re *resourceEnforcer) ApplyLimits(pid int, limits *ResourceLimits) error {
 
 // SupportsLimitType checks if a limit type is supported on current platform
 func (re *resourceEnforcer) SupportsLimitType(limitType ResourceLimitType) bool {
-	switch runtime.GOOS {
-	case "linux":
-		return re.supportsLimitTypeLinux(limitType)
-	case "windows":
-		return re.supportsLimitTypeWindows(limitType)
-	case "darwin":
-		return re.supportsLimitTypeDarwin(limitType)
-	default:
-		// Generic support for basic limits
-		return limitType == ResourceLimitTypeMemory || limitType == ResourceLimitTypeCPU
-	}
+	return supportsLimitTypeImpl(limitType)
 }
 
 // applyMemoryLimits applies memory-specific limits
@@ -107,17 +96,7 @@ func (re *resourceEnforcer) applyMemoryLimits(pid int, limits *MemoryLimits) err
 		return nil
 	}
 
-	switch runtime.GOOS {
-	case "linux":
-		return re.applyLinuxMemoryLimits(pid, limits)
-	case "windows":
-		return re.applyWindowsMemoryLimits(pid, limits)
-	case "darwin":
-		return re.applyDarwinMemoryLimits(pid, limits)
-	default:
-		re.logger.Warnf("Memory limits not supported on platform: %s", runtime.GOOS)
-		return fmt.Errorf("memory limits not supported on platform: %s", runtime.GOOS)
-	}
+	return applyMemoryLimitsImpl(pid, limits, re.logger)
 }
 
 // applyCPULimits applies CPU-specific limits
@@ -126,17 +105,7 @@ func (re *resourceEnforcer) applyCPULimits(pid int, limits *CPULimits) error {
 		return nil
 	}
 
-	switch runtime.GOOS {
-	case "linux":
-		return re.applyLinuxCPULimits(pid, limits)
-	case "windows":
-		return re.applyWindowsCPULimits(pid, limits)
-	case "darwin":
-		return re.applyDarwinCPULimits(pid, limits)
-	default:
-		re.logger.Warnf("CPU limits not supported on platform: %s", runtime.GOOS)
-		return fmt.Errorf("CPU limits not supported on platform: %s", runtime.GOOS)
-	}
+	return applyCPULimitsImpl(pid, limits, re.logger)
 }
 
 // applyProcessLimits applies process/file descriptor limits
@@ -153,69 +122,6 @@ func (re *resourceEnforcer) applyProcessLimits(pid int, limits *ProcessLimits) e
 	}
 
 	re.logger.Debugf("Process limits applied to PID %d", pid)
-	return nil
-}
-
-// Platform-specific limit support checks
-func (re *resourceEnforcer) supportsLimitTypeLinux(limitType ResourceLimitType) bool {
-	switch limitType {
-	case ResourceLimitTypeMemory, ResourceLimitTypeCPU, ResourceLimitTypeIO, ResourceLimitTypeProcess:
-		return true // Linux supports all via cgroups and rlimit
-	default:
-		return false
-	}
-}
-
-func (re *resourceEnforcer) supportsLimitTypeWindows(limitType ResourceLimitType) bool {
-	switch limitType {
-	case ResourceLimitTypeMemory, ResourceLimitTypeCPU:
-		return true // Windows supports these via Job Objects
-	case ResourceLimitTypeProcess:
-		return true // Partial support
-	default:
-		return false
-	}
-}
-
-func (re *resourceEnforcer) supportsLimitTypeDarwin(limitType ResourceLimitType) bool {
-	switch limitType {
-	case ResourceLimitTypeMemory, ResourceLimitTypeCPU, ResourceLimitTypeProcess:
-		return true // macOS supports these via various mechanisms
-	default:
-		return false
-	}
-}
-
-// Platform-specific implementation stubs (to be implemented in Phase 2)
-func (re *resourceEnforcer) applyLinuxMemoryLimits(pid int, limits *MemoryLimits) error {
-	re.logger.Debugf("Linux memory limits for PID %d - implementation pending", pid)
-	// TODO: Implement using cgroups v2
-	return nil
-}
-
-func (re *resourceEnforcer) applyWindowsMemoryLimits(pid int, limits *MemoryLimits) error {
-	return applyWindowsMemoryLimitsImpl(pid, limits, re.logger)
-}
-
-func (re *resourceEnforcer) applyDarwinMemoryLimits(pid int, limits *MemoryLimits) error {
-	re.logger.Debugf("macOS memory limits for PID %d - implementation pending", pid)
-	// TODO: Implement using setrlimit and other macOS APIs
-	return nil
-}
-
-func (re *resourceEnforcer) applyLinuxCPULimits(pid int, limits *CPULimits) error {
-	re.logger.Debugf("Linux CPU limits for PID %d - implementation pending", pid)
-	// TODO: Implement using cgroups v2 cpu controller
-	return nil
-}
-
-func (re *resourceEnforcer) applyWindowsCPULimits(pid int, limits *CPULimits) error {
-	return applyWindowsCPULimitsImpl(pid, limits, re.logger)
-}
-
-func (re *resourceEnforcer) applyDarwinCPULimits(pid int, limits *CPULimits) error {
-	re.logger.Debugf("macOS CPU limits for PID %d - implementation pending", pid)
-	// TODO: Implement using setpriority and process scheduling
 	return nil
 }
 
