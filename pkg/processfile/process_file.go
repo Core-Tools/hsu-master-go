@@ -58,7 +58,7 @@ func NewProcessFileManager(config ProcessFileConfig, logger logging.Logger) *Pro
 	}
 
 	if config.ServiceContext == "" {
-		config.ServiceContext = SystemService
+		config.ServiceContext = UserService
 	}
 
 	return &ProcessFileManager{

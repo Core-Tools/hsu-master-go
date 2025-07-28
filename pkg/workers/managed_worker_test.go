@@ -270,7 +270,7 @@ func TestManagedWorker_ExecuteCmd_PIDFileWriting(t *testing.T) {
 				Environment:      []string{},
 				WaitDelay:        5 * time.Second,
 			},
-			ProcessFile:     &pidConfig,
+			ProcessFile:     pidConfig,
 			GracefulTimeout: 30 * time.Second,
 			Restart: monitoring.RestartConfig{
 				Policy:      monitoring.RestartOnFailure,

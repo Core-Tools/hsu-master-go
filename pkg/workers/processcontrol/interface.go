@@ -81,7 +81,7 @@ type ManagedProcessControlConfig struct {
 	Execution process.ExecutionConfig `yaml:"execution"`
 
 	// PID file configuration (optional)
-	ProcessFile *processfile.ProcessFileConfig `yaml:"process_file,omitempty"`
+	ProcessFile processfile.ProcessFileConfig `yaml:"process_file,omitempty"`
 
 	// Process restart
 	Restart monitoring.RestartConfig `yaml:"restart"`

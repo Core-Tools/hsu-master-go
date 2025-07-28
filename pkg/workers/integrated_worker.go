@@ -26,21 +26,13 @@ type integratedWorker struct {
 }
 
 func NewIntegratedWorker(id string, unit *IntegratedUnit, logger logging.Logger) Worker {
-	// Get PID file configuration from unit or use default
-	pidConfig := unit.Control.ProcessFile
-	if pidConfig == nil {
-		// Use default system service configuration
-		defaultConfig := processfile.GetRecommendedProcessFileConfig("system", "") // use default app name
-		pidConfig = &defaultConfig
-	}
-
 	return &integratedWorker{
 		id:                    id,
 		metadata:              unit.Metadata,
 		processControlConfig:  unit.Control,
 		healthCheckRunOptions: unit.HealthCheckRunOptions,
 		logger:                logger,
-		pidManager:            processfile.NewProcessFileManager(*pidConfig, logger),
+		pidManager:            processfile.NewProcessFileManager(unit.Control.ProcessFile, logger),
 	}
 }
 
