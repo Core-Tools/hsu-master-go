@@ -2,6 +2,7 @@ package logcollection
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"time"
 
@@ -216,8 +217,8 @@ type ZapConfig struct {
 
 // createZapLogger creates a zap logger from configuration
 func createZapLogger(config ZapConfig) (*zap.Logger, error) {
-	// Parse level
-	level, err := zapcore.ParseLevel(config.Level)
+	// Parse level, in zap v1.27.0 use zapcore.ParseLevel(config.Level)
+	level, err := getLevelFromString(config.Level)
 	if err != nil {
 		level = zapcore.InfoLevel
 	}
@@ -266,6 +267,28 @@ func createZapLogger(config ZapConfig) (*zap.Logger, error) {
 	logger := zap.New(core, opts...)
 
 	return logger, nil
+}
+
+// And older version (v1.20.0) of zapcore.ParseLevel(levelStr string) (v1.27.0)
+func getLevelFromString(levelStr string) (zapcore.Level, error) {
+	switch levelStr {
+	case "debug":
+		return zap.DebugLevel, nil
+	case "info":
+		return zap.InfoLevel, nil
+	case "warn":
+		return zap.WarnLevel, nil
+	case "error":
+		return zap.ErrorLevel, nil
+	case "fatal":
+		return zap.FatalLevel, nil
+	case "dpanic":
+		return zap.DPanicLevel, nil
+	case "panic":
+		return zap.PanicLevel, nil
+	default:
+		return -1, fmt.Errorf("invalid log level: %s", levelStr)
+	}
 }
 
 // DefaultZapConfig returns a sensible default Zap configuration
