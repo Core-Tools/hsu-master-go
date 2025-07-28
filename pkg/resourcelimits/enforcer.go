@@ -28,8 +28,9 @@ func (re *resourceEnforcer) ApplyLimits(pid int, limits *ResourceLimits) error {
 	re.logger.Infof("Applying resource limits to PID %d", pid)
 
 	// Check if process exists
-	if !processstate.IsProcessRunning(pid) {
-		return fmt.Errorf("process %d is not running", pid)
+	running, err := processstate.IsProcessRunning(pid)
+	if !running {
+		return fmt.Errorf("process %d is not running, err: %v", pid, err)
 	}
 
 	var errors []error

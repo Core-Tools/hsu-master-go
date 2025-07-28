@@ -128,7 +128,8 @@ func openProcessByPIDFile(pidFile string) (*os.Process, error) {
 	}
 
 	// Verify the process is actually running
-	if !processstate.IsProcessRunning(process.Pid) {
+	running, err := processstate.IsProcessRunning(process.Pid)
+	if !running {
 		return nil, errors.NewProcessError("process is not running", err).WithContext("pid", pid).WithContext("pid_file", pidFile)
 	}
 

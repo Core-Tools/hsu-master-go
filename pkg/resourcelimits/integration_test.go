@@ -61,11 +61,12 @@ func TestResourceLimitManagerViolationDispatch(t *testing.T) {
 	var callbackInvoked bool
 	var receivedPolicy ResourcePolicy
 	var receivedViolation *ResourceViolation
-	var mu sync.Mutex
+
+	var wg sync.WaitGroup
 
 	manager.SetViolationCallback(func(policy ResourcePolicy, violation *ResourceViolation) {
-		mu.Lock()
-		defer mu.Unlock()
+		defer wg.Done()
+
 		callbackInvoked = true
 		receivedPolicy = policy
 		receivedViolation = violation
@@ -82,17 +83,16 @@ func TestResourceLimitManagerViolationDispatch(t *testing.T) {
 	}
 
 	// Simulate violation dispatch
+	wg.Add(1)
 	manager.(*resourceLimitManager).dispatchViolation(testViolation)
 
 	// Wait a bit for async processing
-	time.Sleep(100 * time.Millisecond)
+	wg.Wait()
 
-	mu.Lock()
 	require.True(t, callbackInvoked, "External callback was not invoked")
 	assert.Equal(t, ResourcePolicyRestart, receivedPolicy)
 	require.NotNil(t, receivedViolation)
 	assert.Equal(t, "Test violation", receivedViolation.Message)
-	mu.Unlock()
 }
 
 func TestProcessControlIntegrationPattern(t *testing.T) {
@@ -122,14 +122,15 @@ func TestProcessControlIntegrationPattern(t *testing.T) {
 
 	// Simulate ProcessControl violation handling
 	var receivedPolicies []ResourcePolicy
-	var receivedViolations []*ResourceViolation
-	var mu sync.Mutex
+	var receivedViolations []string
+
+	var wg sync.WaitGroup
 
 	processControlViolationHandler := func(policy ResourcePolicy, violation *ResourceViolation) {
-		mu.Lock()
-		defer mu.Unlock()
+		defer wg.Done()
+
 		receivedPolicies = append(receivedPolicies, policy)
-		receivedViolations = append(receivedViolations, violation)
+		receivedViolations = append(receivedViolations, violation.Message)
 
 		// Simulate ProcessControl policy handling
 		switch violation.LimitType {
@@ -173,19 +174,19 @@ func TestProcessControlIntegrationPattern(t *testing.T) {
 	}
 
 	// Dispatch violations
+	wg.Add(2) // callbacks will be called only for critical violations
 	for _, violation := range testViolations {
 		manager.(*resourceLimitManager).dispatchViolation(violation)
 	}
 
 	// Wait for processing
-	time.Sleep(100 * time.Millisecond)
+	wg.Wait()
 
-	// Verify all violations were handled
-	mu.Lock()
-	defer mu.Unlock()
 	require.Equal(t, 2, len(receivedPolicies), "Expected 2 policies handled, got %d", len(receivedPolicies))
-	assert.EqualValues(t, []ResourcePolicy{ResourcePolicyRestart, ResourcePolicyGracefulShutdown}, receivedPolicies)
+	assert.Contains(t, receivedPolicies, ResourcePolicyRestart)
+	assert.Contains(t, receivedPolicies, ResourcePolicyGracefulShutdown)
 
 	require.Equal(t, 2, len(receivedViolations), "Expected 2 violations handled, got %d", len(receivedViolations))
-	assert.EqualValues(t, []string{"Memory limit exceeded", "CPU limit exceeded"}, []string{receivedViolations[0].Message, receivedViolations[1].Message})
+	assert.Contains(t, receivedViolations, "Memory limit exceeded")
+	assert.Contains(t, receivedViolations, "CPU limit exceeded")
 }

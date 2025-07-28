@@ -30,10 +30,13 @@ const (
 
 type processControl struct {
 	config   processcontrol.ProcessControlOptions
-	process  *os.Process
 	stdout   io.ReadCloser
 	logger   logging.Logger
 	workerID string
+
+	// Running process tracking
+	process           *os.Process
+	processDoneSignal chan error
 
 	// Health monitor
 	healthMonitor monitoring.HealthMonitor
@@ -136,6 +139,22 @@ func (pc *processControl) startInternal(ctx context.Context) error {
 
 	pc.process = process
 	pc.stdout = stdout
+
+	processDoneSignal := make(chan error, 1)
+
+	// Start a goroutine to wait for process exit
+	go func() {
+		state, err := process.Wait()
+		if err != nil {
+			pc.logger.Infof("Process PID %d wait failed: %v", process.Pid, err)
+			processDoneSignal <- errors.NewProcessError("process wait failed", err).WithContext("pid", process.Pid)
+		} else {
+			pc.logger.Infof("Process PID %d exited with status: %v", process.Pid, state)
+			processDoneSignal <- nil
+		}
+	}()
+
+	pc.processDoneSignal = processDoneSignal
 
 	// Start log collection if service is available (NEW)
 	if err := pc.startLogCollection(ctx, process, stdout); err != nil {
@@ -393,7 +412,7 @@ func (pc *processControl) stopInternal(ctx context.Context, idDeadPID bool) erro
 	// Phase 2: Termination outside lock (reuse the existing logic)
 	var terminationError error
 	if plan.processToTerminate != nil {
-		if err := pc.terminateProcessExternal(ctx, plan.processToTerminate, idDeadPID); err != nil {
+		if err := pc.terminateProcessExternal(ctx, plan.processToTerminate, plan.processDoneSignal, idDeadPID); err != nil {
 			pc.logger.Errorf("Failed to terminate process: %v", err)
 			terminationError = errors.NewProcessError("failed to terminate process", err)
 		}
@@ -451,7 +470,7 @@ func (pc *processControl) restartInternal(ctx context.Context, idDeadPID bool) e
 
 // terminateProcessExternal handles graceful process termination with timeout and context cancellation
 // This version works with an external process reference to avoid holding locks during long operations
-func (pc *processControl) terminateProcessExternal(ctx context.Context, proc *os.Process, idDeadPID bool) error {
+func (pc *processControl) terminateProcessExternal(ctx context.Context, proc *os.Process, done chan error, idDeadPID bool) error {
 	if proc == nil {
 		return errors.NewProcessError("no process to terminate", nil)
 	}
@@ -464,20 +483,6 @@ func (pc *processControl) terminateProcessExternal(ctx context.Context, proc *os
 	if gracefulTimeout <= 0 {
 		gracefulTimeout = 20 * time.Second // Timeout super-default
 	}
-
-	// Create a channel to signal when process exits
-	done := make(chan error, 1)
-
-	// Start a goroutine to wait for process exit
-	go func() {
-		state, err := proc.Wait()
-		if err != nil {
-			done <- errors.NewProcessError("process wait failed", err).WithContext("pid", pid)
-		} else {
-			pc.logger.Infof("Process PID %d exited with status: %v", pid, state)
-			done <- nil
-		}
-	}()
 
 	// Try graceful termination first
 	pc.logger.Infof("Sending termination signal to PID %d, idDead: %t, timeout: %v", pid, idDeadPID, gracefulTimeout)
@@ -553,7 +558,7 @@ func (pc *processControl) terminateProcessWithPolicy(ctx context.Context, policy
 			}
 		} else {
 			// Graceful termination with timeout (reuse existing logic)
-			if err := pc.terminateProcessExternal(ctx, plan.processToTerminate, false); err != nil {
+			if err := pc.terminateProcessExternal(ctx, plan.processToTerminate, plan.processDoneSignal, false); err != nil {
 				pc.logger.Errorf("Failed to terminate process gracefully: %v", err)
 				terminationError = errors.NewProcessError("failed to terminate process", err)
 			}
@@ -603,6 +608,7 @@ func (pc *processControl) cleanupResourcesUnderLock() {
 // terminationPlan holds data extracted under lock for termination operations
 type terminationPlan struct {
 	processToTerminate *os.Process
+	processDoneSignal  chan error
 	targetState        ProcessState
 	skipGraceful       bool
 	shouldProceed      bool
@@ -643,6 +649,7 @@ func (pc *processControl) validateAndPlanTermination(policy resourcelimits.Resou
 
 	// Get process reference for termination
 	plan.processToTerminate = pc.process
+	plan.processDoneSignal = pc.processDoneSignal
 
 	// For immediate kill, do full cleanup under same lock
 	if plan.skipGraceful {
@@ -651,6 +658,7 @@ func (pc *processControl) validateAndPlanTermination(policy resourcelimits.Resou
 
 	// Clear process reference to prevent further operations
 	pc.process = nil
+	pc.processDoneSignal = nil
 
 	plan.shouldProceed = true
 	return plan
@@ -673,6 +681,7 @@ func (pc *processControl) finalizeTermination(plan *terminationPlan) {
 // stopPlan holds data extracted under lock for stop operations
 type stopPlan struct {
 	processToTerminate *os.Process
+	processDoneSignal  chan error
 	shouldProceed      bool
 	errorToReturn      error
 }
@@ -706,7 +715,11 @@ func (pc *processControl) validateAndPlanStop() *stopPlan {
 
 	// Get process reference for termination
 	plan.processToTerminate = pc.process
-	pc.process = nil // Clear reference immediately
+	plan.processDoneSignal = pc.processDoneSignal
+
+	// Clear process reference to prevent further operations
+	pc.process = nil
+	pc.processDoneSignal = nil
 
 	plan.shouldProceed = true
 	return plan

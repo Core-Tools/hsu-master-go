@@ -289,17 +289,18 @@ func (h *healthMonitor) updateState(isHealthy bool, message string) {
 
 		if h.state.Status != HealthCheckStatusHealthy {
 			h.state.Status = HealthCheckStatusHealthy
-			h.logger.Infof("Health check recovered, id: %s, previous: %s, consecutive_successes: %d",
-				h.id, previousStatus, h.state.ConsecutiveSuccesses)
+			h.logger.Infof("Health check recovered, id: %s, previous: %s, consecutive_successes: %d, message: %s",
+				h.id, previousStatus, h.state.ConsecutiveSuccesses, message)
 
 			// Call recovery callback if process recovered from unhealthy state
 			if previousWasUnhealthy && h.recoveryCallback != nil {
-				h.logger.Infof("Triggering recovery callback, id: %s, recovered from: %s", h.id, previousStatus)
+				h.logger.Infof("Triggering recovery callback, id: %s, recovered from: %s, message: %s",
+					h.id, previousStatus, message)
 				go h.recoveryCallback() // Call in goroutine to avoid blocking health check
 			}
 		} else {
-			h.logger.Debugf("Health check passed, id: %s, consecutive_successes: %d",
-				h.id, h.state.ConsecutiveSuccesses)
+			h.logger.Debugf("Health check passed, id: %s, consecutive_successes: %d, message: %s",
+				h.id, h.state.ConsecutiveSuccesses, message)
 		}
 	} else {
 		h.state.ConsecutiveFailures++
@@ -390,7 +391,7 @@ func (h *healthMonitor) checkHTTP() (bool, string) {
 
 	req, err := http.NewRequest(method, h.config.HTTP.URL, nil)
 	if err != nil {
-		return false, fmt.Sprintf("Failed to create HTTP request: %v", err)
+		return false, fmt.Sprintf("failed to create HTTP request: %v", err)
 	}
 
 	// Add custom headers
@@ -464,14 +465,14 @@ func (h *healthMonitor) checkExec() (bool, string) {
 	output, err := cmd.CombinedOutput()
 
 	if ctx.Err() == context.DeadlineExceeded {
-		return false, fmt.Sprintf("Exec health check timed out after %v", h.config.RunOptions.Timeout)
+		return false, fmt.Sprintf("exec health check timed out after %v", h.config.RunOptions.Timeout)
 	}
 
 	if err != nil {
-		return false, fmt.Sprintf("Exec health check failed: %v, output: %s", err, string(output))
+		return false, fmt.Sprintf("exec health check failed: %v, output: %s", err, string(output))
 	}
 
-	return true, fmt.Sprintf("Exec health check passed, output: %s", string(output))
+	return true, fmt.Sprintf("exec health check passed, output: %s", string(output))
 }
 
 func (h *healthMonitor) checkProcess() (bool, string) {
@@ -490,11 +491,12 @@ func (h *healthMonitor) checkProcessWithInfo() (bool, string) {
 	pid := h.processInfo.PID
 
 	// Check if process running
-	if !processstate.IsProcessRunning(pid) {
-		return false, fmt.Sprintf("Process not running: PID %d", pid)
+	running, err := processstate.IsProcessRunning(pid)
+	if !running {
+		return false, fmt.Sprintf("process not running: PID %d, err: %v", pid, err)
 	}
 
-	return true, fmt.Sprintf("Process is running: PID %d", pid)
+	return true, fmt.Sprintf("process is running: PID %d, err: %v", pid, err)
 }
 
 func (h *healthMonitor) checkProcessBasic() (bool, string) {
@@ -503,7 +505,7 @@ func (h *healthMonitor) checkProcessBasic() (bool, string) {
 	// Without process info, we can't do much more than assume healthy
 	// This should ideally not happen in production
 	h.logger.Warnf("Process health check has no process information, id: %s", h.id)
-	return true, "Process health check: no process information available (assuming healthy)"
+	return true, "process health check: no process information available (assuming healthy)"
 }
 
 // SetProcessInfo allows updating process information after health monitor creation

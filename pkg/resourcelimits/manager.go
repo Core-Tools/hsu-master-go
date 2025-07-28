@@ -122,13 +122,14 @@ func (rlm *resourceLimitManager) Stop() {
 	rlm.mutex.Lock()
 	defer rlm.mutex.Unlock()
 
+	rlm.logger.Infof("Stopping resource limit management for PID %d", rlm.pid)
+
 	if !rlm.isRunning {
+		rlm.logger.Infof("Resource limit management not running for PID %d", rlm.pid)
 		return
 	}
 
 	// rlm.limits != nil here, see Start() logic
-
-	rlm.logger.Infof("Stopping resource limit management for PID %d", rlm.pid)
 
 	rlm.cancel()
 	rlm.isRunning = false

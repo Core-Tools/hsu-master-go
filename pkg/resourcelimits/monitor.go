@@ -83,8 +83,10 @@ func (rm *resourceMonitor) Start(ctx context.Context) error {
 	}
 
 	// Check if process exists
-	if !processstate.IsProcessRunning(rm.pid) {
-		return fmt.Errorf("process %d is not running", rm.pid)
+	running, err := processstate.IsProcessRunning(rm.pid)
+	if !running {
+		rm.logger.Infof("Not running process PID %d, err: %v for resource monitoring", rm.pid, err)
+		return fmt.Errorf("process %d is not running, err: %v", rm.pid, err)
 	}
 
 	rm.ctx, rm.cancel = context.WithCancel(ctx)
@@ -104,11 +106,12 @@ func (rm *resourceMonitor) Stop() {
 	rm.mutex.Lock()
 	defer rm.mutex.Unlock()
 
+	rm.logger.Infof("Stopping resource monitoring for PID %d", rm.pid)
+
 	if !rm.isRunning {
+		rm.logger.Infof("Resource monitoring not running for PID %d", rm.pid)
 		return
 	}
-
-	rm.logger.Infof("Stopping resource monitoring for PID %d", rm.pid)
 
 	rm.cancel()
 	rm.isRunning = false
@@ -122,8 +125,9 @@ func (rm *resourceMonitor) Stop() {
 // GetCurrentUsage returns current resource usage
 func (rm *resourceMonitor) GetCurrentUsage() (*ResourceUsage, error) {
 	// Check if process exists
-	if !processstate.IsProcessRunning(rm.pid) {
-		return nil, fmt.Errorf("process %d is not running", rm.pid)
+	running, err := processstate.IsProcessRunning(rm.pid)
+	if !running {
+		return nil, fmt.Errorf("process %d is not running, err: %v", rm.pid, err)
 	}
 
 	usage, err := rm.platformMonitor.GetProcessUsage(rm.pid)
@@ -163,9 +167,9 @@ func (rm *resourceMonitor) monitorLoop() {
 // collectUsage collects current resource usage
 func (rm *resourceMonitor) collectUsage() {
 	// Check if process is still running
-	if !processstate.IsProcessRunning(rm.pid) {
-		rm.logger.Warnf("Process %d is no longer running, stopping resource monitoring", rm.pid)
-		rm.Stop()
+	running, err := processstate.IsProcessRunning(rm.pid)
+	if !running {
+		rm.logger.Warnf("Failed to collect resource usage: process %d is not running, err: %v", rm.pid, err)
 		return
 	}
 

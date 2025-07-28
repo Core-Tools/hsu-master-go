@@ -3,6 +3,7 @@
 package processstate
 
 import (
+	"fmt"
 	"syscall"
 )
 
@@ -14,9 +15,9 @@ const (
 )
 
 // isProcessRunning checks if a Windows process is still running
-func IsProcessRunning(pid int) bool {
+func IsProcessRunning(pid int) (bool, error) {
 	if pid <= 0 {
-		return false
+		return false, fmt.Errorf("invalid PID format")
 	}
 
 	// Open process handle with minimal rights needed for status check
@@ -26,7 +27,7 @@ func IsProcessRunning(pid int) bool {
 		uint32(pid),
 	)
 	if err != nil {
-		return false // Process doesn't exist or access denied
+		return false, err // Process doesn't exist or access denied
 	}
 	defer syscall.CloseHandle(handle)
 
@@ -34,9 +35,9 @@ func IsProcessRunning(pid int) bool {
 	var exitCode uint32
 	err = syscall.GetExitCodeProcess(handle, &exitCode)
 	if err != nil {
-		return false // Can't get exit code, assume dead
+		return false, err // Can't get exit code, assume dead
 	}
 
 	// STILL_ACTIVE means process is running
-	return exitCode == STILL_ACTIVE
+	return exitCode == STILL_ACTIVE, nil
 }
