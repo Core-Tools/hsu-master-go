@@ -84,8 +84,8 @@ workers:
             environment: ["LOG_LEVEL=debug"]
             working_directory: "` + escapeForYAML(workingDir) + `"
             wait_delay: "10s"
-          restart:
-            policy: "always"
+          restart_policy: "always"
+          context_aware_restart:
             max_retries: 3
             retry_delay: "5s"
             backoff_rate: 1.5
@@ -108,8 +108,8 @@ workers:
           execution:
             executable_path: "` + escapeForYAML(executablePath) + `"
             args: ` + formatArgsForYAML(args) + `
-          restart:
-            policy: "on-failure"
+          restart_policy: "on-failure"
+          context_aware_restart:
             max_retries: 3
             retry_delay: "5s"
             backoff_rate: 1.5
@@ -126,18 +126,18 @@ workers:
 				// Check managed worker
 				managed := config.Workers[0]
 				assert.Equal(t, "test-managed", managed.ID)
-				assert.Equal(t, WorkerTypeManaged, managed.Type)
+				assert.Equal(t, WorkerManagementTypeManaged, managed.Type)
 				assert.True(t, *managed.Enabled)
 				assert.NotNil(t, managed.Unit.Managed)
 				assert.Equal(t, "Test Managed Service", managed.Unit.Managed.Metadata.Name)
 				assert.Equal(t, executablePath, managed.Unit.Managed.Control.Execution.ExecutablePath)
 				assert.Equal(t, args, managed.Unit.Managed.Control.Execution.Args)
-				assert.Equal(t, monitoring.RestartAlways, managed.Unit.Managed.Control.Restart.Policy)
+				assert.Equal(t, processcontrol.RestartAlways, managed.Unit.Managed.Control.RestartPolicy)
 
 				// Check integrated worker
 				integrated := config.Workers[1]
 				assert.Equal(t, "test-integrated", integrated.ID)
-				assert.Equal(t, WorkerTypeIntegrated, integrated.Type)
+				assert.Equal(t, WorkerManagementTypeIntegrated, integrated.Type)
 				assert.True(t, *integrated.Enabled) // Should default to true
 				assert.NotNil(t, integrated.Unit.Integrated)
 			},
@@ -243,7 +243,7 @@ func TestValidateConfig(t *testing.T) {
 				Workers: []WorkerConfig{
 					{
 						ID:      "test-worker",
-						Type:    WorkerTypeManaged,
+						Type:    WorkerManagementTypeManaged,
 						Enabled: func() *bool { b := true; return &b }(),
 						Unit: WorkerUnitConfig{
 							Managed: &workers.ManagedUnit{
@@ -254,11 +254,12 @@ func TestValidateConfig(t *testing.T) {
 									Execution: process.ExecutionConfig{
 										ExecutablePath: executablePath,
 									},
-									Restart: monitoring.RestartConfig{
-										Policy:      monitoring.RestartOnFailure,
-										MaxRetries:  3,
-										RetryDelay:  5 * time.Second,
-										BackoffRate: 1.5,
+									ContextAwareRestart: processcontrol.ContextAwareRestartConfig{
+										Default: processcontrol.RestartConfig{
+											MaxRetries:  3,
+											RetryDelay:  5 * time.Second,
+											BackoffRate: 1.5,
+										},
 									},
 								},
 							},
@@ -282,17 +283,18 @@ func TestValidateConfig(t *testing.T) {
 				Workers: []WorkerConfig{
 					{
 						ID:   "test-worker",
-						Type: WorkerTypeManaged,
+						Type: WorkerManagementTypeManaged,
 						Unit: WorkerUnitConfig{
 							Managed: &workers.ManagedUnit{
 								Metadata: workers.UnitMetadata{Name: "Test"},
 								Control: processcontrol.ManagedProcessControlConfig{
 									Execution: process.ExecutionConfig{ExecutablePath: executablePath},
-									Restart: monitoring.RestartConfig{
-										Policy:      monitoring.RestartOnFailure,
-										MaxRetries:  3,
-										RetryDelay:  5 * time.Second,
-										BackoffRate: 1.5,
+									ContextAwareRestart: processcontrol.ContextAwareRestartConfig{
+										Default: processcontrol.RestartConfig{
+											MaxRetries:  3,
+											RetryDelay:  5 * time.Second,
+											BackoffRate: 1.5,
+										},
 									},
 								},
 							},
@@ -326,18 +328,19 @@ func TestCreateWorkersFromConfig(t *testing.T) {
 		Workers: []WorkerConfig{
 			{
 				ID:      "managed-worker",
-				Type:    WorkerTypeManaged,
+				Type:    WorkerManagementTypeManaged,
 				Enabled: func() *bool { b := true; return &b }(),
 				Unit: WorkerUnitConfig{
 					Managed: &workers.ManagedUnit{
 						Metadata: workers.UnitMetadata{Name: "Managed Test"},
 						Control: processcontrol.ManagedProcessControlConfig{
 							Execution: process.ExecutionConfig{ExecutablePath: executablePath},
-							Restart: monitoring.RestartConfig{
-								Policy:      monitoring.RestartOnFailure,
-								MaxRetries:  3,
-								RetryDelay:  5 * time.Second,
-								BackoffRate: 1.5,
+							ContextAwareRestart: processcontrol.ContextAwareRestartConfig{
+								Default: processcontrol.RestartConfig{
+									MaxRetries:  3,
+									RetryDelay:  5 * time.Second,
+									BackoffRate: 1.5,
+								},
 							},
 						},
 					},
@@ -345,18 +348,19 @@ func TestCreateWorkersFromConfig(t *testing.T) {
 			},
 			{
 				ID:      "disabled-worker",
-				Type:    WorkerTypeManaged,
+				Type:    WorkerManagementTypeManaged,
 				Enabled: func() *bool { b := false; return &b }(), // Disabled
 				Unit: WorkerUnitConfig{
 					Managed: &workers.ManagedUnit{
 						Metadata: workers.UnitMetadata{Name: "Disabled Test"},
 						Control: processcontrol.ManagedProcessControlConfig{
 							Execution: process.ExecutionConfig{ExecutablePath: executablePath},
-							Restart: monitoring.RestartConfig{
-								Policy:      monitoring.RestartNever,
-								MaxRetries:  0,
-								RetryDelay:  0,
-								BackoffRate: 1.0,
+							ContextAwareRestart: processcontrol.ContextAwareRestartConfig{
+								Default: processcontrol.RestartConfig{
+									MaxRetries:  0,
+									RetryDelay:  0,
+									BackoffRate: 1.0,
+								},
 							},
 						},
 					},
@@ -384,7 +388,7 @@ func TestConfigDefaults(t *testing.T) {
 		Workers: []WorkerConfig{
 			{
 				ID:   "test-worker",
-				Type: WorkerTypeManaged,
+				Type: WorkerManagementTypeManaged,
 				// Enabled not set - should default to true
 				Unit: WorkerUnitConfig{
 					Managed: &workers.ManagedUnit{
@@ -394,9 +398,11 @@ func TestConfigDefaults(t *testing.T) {
 								ExecutablePath: executablePath,
 								// WaitDelay not set - should get default
 							},
-							Restart: monitoring.RestartConfig{
-								// Policy not set - should get default
-								// MaxRetries not set - should get default
+							// RestartPolicy not set - should get default
+							ContextAwareRestart: processcontrol.ContextAwareRestartConfig{
+								Default: processcontrol.RestartConfig{
+									// MaxRetries not set - should get default
+								},
 							},
 						},
 					},
@@ -416,10 +422,10 @@ func TestConfigDefaults(t *testing.T) {
 	worker := config.Workers[0]
 	assert.True(t, *worker.Enabled) // Now checking pointer
 	assert.Equal(t, 10*time.Second, worker.Unit.Managed.Control.Execution.WaitDelay)
-	assert.Equal(t, monitoring.RestartOnFailure, worker.Unit.Managed.Control.Restart.Policy)
-	assert.Equal(t, 3, worker.Unit.Managed.Control.Restart.MaxRetries)
-	assert.Equal(t, 5*time.Second, worker.Unit.Managed.Control.Restart.RetryDelay)
-	assert.Equal(t, 1.5, worker.Unit.Managed.Control.Restart.BackoffRate)
+	assert.Equal(t, processcontrol.RestartOnFailure, worker.Unit.Managed.Control.RestartPolicy)
+	assert.Equal(t, 3, worker.Unit.Managed.Control.ContextAwareRestart.Default.MaxRetries)
+	assert.Equal(t, 5*time.Second, worker.Unit.Managed.Control.ContextAwareRestart.Default.RetryDelay)
+	assert.Equal(t, 1.5, worker.Unit.Managed.Control.ContextAwareRestart.Default.BackoffRate)
 }
 
 func TestGetConfigSummary(t *testing.T) {
@@ -433,14 +439,14 @@ func TestGetConfigSummary(t *testing.T) {
 		Workers: []WorkerConfig{
 			{
 				ID:      "web-service",
-				Type:    WorkerTypeManaged,
+				Type:    WorkerManagementTypeManaged,
 				Enabled: func() *bool { b := true; return &b }(),
 				Unit: WorkerUnitConfig{
 					Managed: &workers.ManagedUnit{
 						Metadata: workers.UnitMetadata{Name: "Web Service"},
 						Control: processcontrol.ManagedProcessControlConfig{
-							Execution: process.ExecutionConfig{ExecutablePath: executablePath},
-							Restart:   monitoring.RestartConfig{Policy: monitoring.RestartAlways},
+							Execution:     process.ExecutionConfig{ExecutablePath: executablePath},
+							RestartPolicy: processcontrol.RestartAlways,
 						},
 						HealthCheck: monitoring.HealthCheckConfig{
 							Type: monitoring.HealthCheckTypeHTTP,
@@ -450,7 +456,7 @@ func TestGetConfigSummary(t *testing.T) {
 			},
 			{
 				ID:      "db-monitor",
-				Type:    WorkerTypeUnmanaged,
+				Type:    WorkerManagementTypeUnmanaged,
 				Enabled: func() *bool { b := false; return &b }(),
 				Unit: WorkerUnitConfig{
 					Unmanaged: &workers.UnmanagedUnit{

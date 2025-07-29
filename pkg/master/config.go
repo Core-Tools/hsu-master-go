@@ -8,7 +8,6 @@ import (
 	"github.com/core-tools/hsu-master/pkg/errors"
 	logconfig "github.com/core-tools/hsu-master/pkg/logcollection/config"
 	"github.com/core-tools/hsu-master/pkg/logging"
-	"github.com/core-tools/hsu-master/pkg/monitoring"
 	"github.com/core-tools/hsu-master/pkg/workers"
 	"github.com/core-tools/hsu-master/pkg/workers/processcontrol"
 
@@ -31,19 +30,32 @@ type MasterConfigOptions struct {
 
 // WorkerConfig represents a single worker configuration
 type WorkerConfig struct {
-	ID      string           `yaml:"id"`
-	Type    WorkerType       `yaml:"type"`
-	Enabled *bool            `yaml:"enabled,omitempty"` // Pointer to distinguish unset from false
-	Unit    WorkerUnitConfig `yaml:"unit"`
+	ID          string               `yaml:"id"`
+	Type        WorkerManagementType `yaml:"type"`              // ✅ RENAMED: How the worker is managed
+	ProfileType string               `yaml:"profile_type"`      // ✅ NEW: Worker load/resource profile for restart policies
+	Enabled     *bool                `yaml:"enabled,omitempty"` // Pointer to distinguish unset from false
+	Unit        WorkerUnitConfig     `yaml:"unit"`
 }
 
-// WorkerType represents the type of worker
-type WorkerType string
+// WorkerManagementType represents how the worker is managed by HSU Master
+type WorkerManagementType string
 
 const (
-	WorkerTypeManaged    WorkerType = "managed"
-	WorkerTypeUnmanaged  WorkerType = "unmanaged"
-	WorkerTypeIntegrated WorkerType = "integrated"
+	WorkerManagementTypeManaged    WorkerManagementType = "managed"
+	WorkerManagementTypeUnmanaged  WorkerManagementType = "unmanaged"
+	WorkerManagementTypeIntegrated WorkerManagementType = "integrated"
+)
+
+// WorkerProfileType represents the worker's load/resource profile for restart policy decisions
+type WorkerProfileType string
+
+const (
+	WorkerProfileTypeBatch     WorkerProfileType = "batch"     // Batch processing, ETL jobs, ML training
+	WorkerProfileTypeWeb       WorkerProfileType = "web"       // HTTP servers, API gateways, frontend services
+	WorkerProfileTypeDatabase  WorkerProfileType = "database"  // Database servers, caches, persistent storage
+	WorkerProfileTypeWorker    WorkerProfileType = "worker"    // Background job processors, queue workers
+	WorkerProfileTypeScheduler WorkerProfileType = "scheduler" // Cron-like schedulers, orchestrators
+	WorkerProfileTypeDefault   WorkerProfileType = "default"   // Unknown or generic services
 )
 
 // WorkerUnitConfig is a union type that holds configuration for different worker types
@@ -125,19 +137,19 @@ func CreateWorkersFromConfig(config *MasterConfig, logger logging.Logger) ([]wor
 // createWorkerFromConfig creates a single worker from its configuration
 func createWorkerFromConfig(config WorkerConfig, logger logging.Logger) (workers.Worker, error) {
 	switch config.Type {
-	case WorkerTypeManaged:
+	case WorkerManagementTypeManaged:
 		if config.Unit.Managed == nil {
 			return nil, errors.NewValidationError("managed unit configuration is required for managed worker", nil)
 		}
 		return workers.NewManagedWorker(config.ID, config.Unit.Managed, logger), nil
 
-	case WorkerTypeUnmanaged:
+	case WorkerManagementTypeUnmanaged:
 		if config.Unit.Unmanaged == nil {
 			return nil, errors.NewValidationError("unmanaged unit configuration is required for unmanaged worker", nil)
 		}
 		return workers.NewUnmanagedWorker(config.ID, config.Unit.Unmanaged, logger), nil
 
-	case WorkerTypeIntegrated:
+	case WorkerManagementTypeIntegrated:
 		if config.Unit.Integrated == nil {
 			return nil, errors.NewValidationError("integrated unit configuration is required for integrated worker", nil)
 		}
@@ -145,7 +157,7 @@ func createWorkerFromConfig(config WorkerConfig, logger logging.Logger) (workers
 
 	default:
 		return nil, errors.NewValidationError(
-			fmt.Sprintf("unsupported worker type: %s", config.Type),
+			fmt.Sprintf("unsupported worker management type: %s", config.Type),
 			nil,
 		).WithContext("supported_types", "managed, unmanaged, integrated")
 	}
@@ -171,21 +183,26 @@ func setConfigDefaults(config *MasterConfig) error {
 			worker.Enabled = &enabled
 		}
 
+		// ✅ NEW: Default profile type if not specified
+		if worker.ProfileType == "" {
+			worker.ProfileType = string(WorkerProfileTypeDefault)
+		}
+
 		// Apply type-specific defaults
 		switch worker.Type {
-		case WorkerTypeManaged:
+		case WorkerManagementTypeManaged:
 			if worker.Unit.Managed != nil {
 				if err := setManagedUnitDefaults(worker.Unit.Managed); err != nil {
 					return err
 				}
 			}
-		case WorkerTypeUnmanaged:
+		case WorkerManagementTypeUnmanaged:
 			if worker.Unit.Unmanaged != nil {
 				if err := setUnmanagedUnitDefaults(worker.Unit.Unmanaged); err != nil {
 					return err
 				}
 			}
-		case WorkerTypeIntegrated:
+		case WorkerManagementTypeIntegrated:
 			if worker.Unit.Integrated != nil {
 				if err := setIntegratedUnitDefaults(worker.Unit.Integrated); err != nil {
 					return err
@@ -203,18 +220,45 @@ func setManagedUnitDefaults(config *workers.ManagedUnit) error {
 		config.Control.Execution.WaitDelay = 10 * time.Second
 	}
 
-	// Set restart defaults
-	if config.Control.Restart.Policy == "" {
-		config.Control.Restart.Policy = monitoring.RestartOnFailure
+	// Set context-aware restart defaults
+	if config.Control.RestartPolicy == "" {
+		config.Control.RestartPolicy = processcontrol.RestartOnFailure
 	}
-	if config.Control.Restart.MaxRetries == 0 {
-		config.Control.Restart.MaxRetries = 3
+
+	// Set defaults for context-aware restart configuration
+	if config.Control.ContextAwareRestart.Default.MaxRetries == 0 {
+		config.Control.ContextAwareRestart.Default.MaxRetries = 3
 	}
-	if config.Control.Restart.RetryDelay == 0 {
-		config.Control.Restart.RetryDelay = 5 * time.Second
+	if config.Control.ContextAwareRestart.Default.RetryDelay == 0 {
+		config.Control.ContextAwareRestart.Default.RetryDelay = 5 * time.Second
 	}
-	if config.Control.Restart.BackoffRate == 0 {
-		config.Control.Restart.BackoffRate = 1.5
+	if config.Control.ContextAwareRestart.Default.BackoffRate == 0 {
+		config.Control.ContextAwareRestart.Default.BackoffRate = 1.5
+	}
+
+	// Set context-specific defaults if not provided
+	if config.Control.ContextAwareRestart.HealthFailures == nil {
+		config.Control.ContextAwareRestart.HealthFailures = &processcontrol.RestartConfig{
+			MaxRetries:  config.Control.ContextAwareRestart.Default.MaxRetries,  // Same as default for health failures
+			RetryDelay:  config.Control.ContextAwareRestart.Default.RetryDelay,  // Same as default for health failures
+			BackoffRate: config.Control.ContextAwareRestart.Default.BackoffRate, // Same as default for health failures
+		}
+	}
+
+	if config.Control.ContextAwareRestart.ResourceViolations == nil {
+		config.Control.ContextAwareRestart.ResourceViolations = &processcontrol.RestartConfig{
+			MaxRetries:  config.Control.ContextAwareRestart.Default.MaxRetries + 2, // More lenient for resource violations
+			RetryDelay:  config.Control.ContextAwareRestart.Default.RetryDelay * 2, // Longer delays for resource violations
+			BackoffRate: 1.5,                                                       // Gentler backoff for resource violations
+		}
+	}
+
+	// Set time-based defaults
+	if config.Control.ContextAwareRestart.StartupGracePeriod == 0 {
+		config.Control.ContextAwareRestart.StartupGracePeriod = 2 * time.Minute
+	}
+	if config.Control.ContextAwareRestart.SustainedViolationTime == 0 {
+		config.Control.ContextAwareRestart.SustainedViolationTime = 5 * time.Minute
 	}
 
 	return nil
@@ -304,10 +348,18 @@ func validateWorkersConfig(workers []WorkerConfig) error {
 		}
 		seenIDs[worker.ID] = i
 
-		// Validate worker type
-		if err := validateWorkerType(worker.Type); err != nil {
+		// Validate worker management type
+		if err := validateWorkerManagementType(worker.Type); err != nil {
 			return errors.NewValidationError(
-				fmt.Sprintf("invalid worker type at index %d", i),
+				fmt.Sprintf("invalid worker management type at index %d", i),
+				err,
+			).WithContext("worker_id", worker.ID)
+		}
+
+		// ✅ NEW: Validate worker profile type
+		if err := validateWorkerProfileType(worker.ProfileType); err != nil {
+			return errors.NewValidationError(
+				fmt.Sprintf("invalid worker profile type at index %d", i),
 				err,
 			).WithContext("worker_id", worker.ID)
 		}
@@ -324,8 +376,8 @@ func validateWorkersConfig(workers []WorkerConfig) error {
 	return nil
 }
 
-func validateWorkerType(workerType WorkerType) error {
-	validTypes := []WorkerType{WorkerTypeManaged, WorkerTypeUnmanaged, WorkerTypeIntegrated}
+func validateWorkerManagementType(workerType WorkerManagementType) error {
+	validTypes := []WorkerManagementType{WorkerManagementTypeManaged, WorkerManagementTypeUnmanaged, WorkerManagementTypeIntegrated}
 	for _, validType := range validTypes {
 		if workerType == validType {
 			return nil
@@ -333,14 +385,37 @@ func validateWorkerType(workerType WorkerType) error {
 	}
 
 	return errors.NewValidationError(
-		fmt.Sprintf("unsupported worker type: %s", workerType),
+		fmt.Sprintf("unsupported worker management type: %s", workerType),
 		nil,
 	).WithContext("supported_types", "managed, unmanaged, integrated")
 }
 
-func validateWorkerUnitConfig(workerType WorkerType, unitConfig WorkerUnitConfig) error {
+// ✅ NEW: Validate worker profile type
+func validateWorkerProfileType(profileType string) error {
+	if profileType == "" {
+		return nil // Will be defaulted
+	}
+
+	validTypes := []WorkerProfileType{
+		WorkerProfileTypeBatch, WorkerProfileTypeWeb, WorkerProfileTypeDatabase,
+		WorkerProfileTypeWorker, WorkerProfileTypeScheduler, WorkerProfileTypeDefault,
+	}
+
+	for _, validType := range validTypes {
+		if profileType == string(validType) {
+			return nil
+		}
+	}
+
+	return errors.NewValidationError(
+		fmt.Sprintf("unsupported worker profile type: %s", profileType),
+		nil,
+	).WithContext("supported_types", "batch, web, database, worker, scheduler, default")
+}
+
+func validateWorkerUnitConfig(workerType WorkerManagementType, unitConfig WorkerUnitConfig) error {
 	switch workerType {
-	case WorkerTypeManaged:
+	case WorkerManagementTypeManaged:
 		if unitConfig.Managed == nil {
 			return errors.NewValidationError("managed unit configuration is required for managed worker", nil)
 		}
@@ -349,7 +424,7 @@ func validateWorkerUnitConfig(workerType WorkerType, unitConfig WorkerUnitConfig
 		}
 		return workers.ValidateManagedUnit(*unitConfig.Managed)
 
-	case WorkerTypeUnmanaged:
+	case WorkerManagementTypeUnmanaged:
 		if unitConfig.Unmanaged == nil {
 			return errors.NewValidationError("unmanaged unit configuration is required for unmanaged worker", nil)
 		}
@@ -358,7 +433,7 @@ func validateWorkerUnitConfig(workerType WorkerType, unitConfig WorkerUnitConfig
 		}
 		return workers.ValidateUnmanagedUnit(*unitConfig.Unmanaged)
 
-	case WorkerTypeIntegrated:
+	case WorkerManagementTypeIntegrated:
 		if unitConfig.Integrated == nil {
 			return errors.NewValidationError("integrated unit configuration is required for integrated worker", nil)
 		}
@@ -368,7 +443,7 @@ func validateWorkerUnitConfig(workerType WorkerType, unitConfig WorkerUnitConfig
 		return workers.ValidateIntegratedUnit(*unitConfig.Integrated)
 
 	default:
-		return errors.NewValidationError(fmt.Sprintf("unsupported worker type: %s", workerType), nil)
+		return errors.NewValidationError(fmt.Sprintf("unsupported worker management type: %s", workerType), nil)
 	}
 }
 
@@ -450,6 +525,9 @@ func (w *logCollectionEnabledWorker) ProcessControlOptions() processcontrol.Proc
 	// Add log collection service and config
 	baseOptions.LogCollectionService = w.logIntegration.GetLogCollectionService()
 	baseOptions.LogConfig = w.logIntegration.GetWorkerLogConfig(w.Worker.ID(), w.workerConfig)
+
+	// ✅ NEW: Pass worker profile type from configuration
+	baseOptions.WorkerProfileType = w.workerConfig.ProfileType
 
 	return baseOptions
 }

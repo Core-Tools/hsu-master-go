@@ -56,7 +56,8 @@ func TestProcessControl_ResourceViolationPolicyExecution(t *testing.T) {
 			limitType:        resourcelimits.ResourceLimitTypeMemory,
 			useStrictLogging: false, // Use simple logger
 			setupMocks: func(impl *processControl, logger logging.Logger, breaker *MockRestartCircuitBreaker) {
-				breaker.On("ExecuteRestart", mock.Anything).Return(nil).Once()
+				// ✅ UPDATED: ExecuteRestart now takes RestartFunc and RestartContext
+				breaker.On("ExecuteRestart", mock.Anything, mock.Anything).Return(nil).Once()
 			},
 			expectLogCalls:       false,
 			expectRestartCalls:   true,
@@ -69,7 +70,8 @@ func TestProcessControl_ResourceViolationPolicyExecution(t *testing.T) {
 			limitType:        resourcelimits.ResourceLimitTypeMemory,
 			useStrictLogging: false, // Use simple logger
 			setupMocks: func(impl *processControl, logger logging.Logger, breaker *MockRestartCircuitBreaker) {
-				breaker.On("ExecuteRestart", mock.Anything).Return(assert.AnError).Once()
+				// ✅ UPDATED: ExecuteRestart now takes RestartFunc and RestartContext
+				breaker.On("ExecuteRestart", mock.Anything, mock.Anything).Return(assert.AnError).Once()
 			},
 			expectLogCalls:       false,
 			expectRestartCalls:   true,
@@ -208,7 +210,7 @@ func TestProcessControl_ResourceViolationHandlerIntegration(t *testing.T) {
 			violationType:  resourcelimits.ResourceLimitTypeMemory,
 			expectedPolicy: resourcelimits.ResourcePolicyRestart,
 			setupExpectations: func() {
-				breaker.On("ExecuteRestart", mock.Anything).Return(nil).Once()
+				breaker.On("ExecuteRestart", mock.Anything, mock.Anything).Return(nil).Once()
 			},
 			description: "Memory violation should trigger restart policy",
 		},

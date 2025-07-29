@@ -29,7 +29,7 @@ func TestDeferOnlyLocking_PlanExecuteFinalizePattern(t *testing.T) {
 
 	t.Run("stop_operation_plan_execute_finalize", func(t *testing.T) {
 		// Setup: Process in running state
-		impl.state = ProcessStateRunning
+		impl.state = processcontrol.ProcessStateRunning
 		impl.process = &os.Process{Pid: 12345}
 		impl.stdout = &MockReadCloser{}
 
@@ -43,7 +43,7 @@ func TestDeferOnlyLocking_PlanExecuteFinalizePattern(t *testing.T) {
 		assert.Nil(t, plan.errorToReturn, "Plan should not have error for valid operation")
 
 		// Verify immediate state transition during planning
-		assert.Equal(t, ProcessStateStopping, impl.state, "State should transition to Stopping during planning")
+		assert.Equal(t, processcontrol.ProcessStateStopping, impl.state, "State should transition to Stopping during planning")
 		assert.Nil(t, impl.process, "Process reference should be cleared during planning")
 
 		// PHASE 2: EXECUTE (would happen outside locks - we simulate)
@@ -53,13 +53,13 @@ func TestDeferOnlyLocking_PlanExecuteFinalizePattern(t *testing.T) {
 		impl.finalizeStop()
 
 		// Verify finalization results
-		assert.Equal(t, ProcessStateIdle, impl.state, "State should be Idle after finalization")
+		assert.Equal(t, processcontrol.ProcessStateIdle, impl.state, "State should be Idle after finalization")
 		assert.Nil(t, impl.stdout, "Resources should be cleaned up during finalization")
 	})
 
 	t.Run("termination_operation_plan_execute_finalize", func(t *testing.T) {
 		// Reset for termination test
-		impl.state = ProcessStateRunning
+		impl.state = processcontrol.ProcessStateRunning
 		impl.process = &os.Process{Pid: 67890}
 		impl.stdout = &MockReadCloser{}
 
@@ -71,11 +71,11 @@ func TestDeferOnlyLocking_PlanExecuteFinalizePattern(t *testing.T) {
 		require.NotNil(t, plan, "Termination plan should be created")
 		assert.True(t, plan.shouldProceed, "Termination plan should indicate proceed")
 		assert.NotNil(t, plan.processToTerminate, "Termination plan should extract process reference")
-		assert.Equal(t, ProcessStateStopping, plan.targetState, "Graceful shutdown should target Stopping state")
+		assert.Equal(t, processcontrol.ProcessStateStopping, plan.targetState, "Graceful shutdown should target Stopping state")
 		assert.False(t, plan.skipGraceful, "Graceful shutdown should not skip graceful termination")
 
 		// Verify state transition during planning
-		assert.Equal(t, ProcessStateStopping, impl.state, "State should transition to target state during planning")
+		assert.Equal(t, processcontrol.ProcessStateStopping, impl.state, "State should transition to target state during planning")
 
 		// PHASE 2: EXECUTE (would happen outside locks)
 		// In real implementation: terminateProcessExternal(plan.processToTerminate, plan.skipGraceful)
@@ -84,12 +84,12 @@ func TestDeferOnlyLocking_PlanExecuteFinalizePattern(t *testing.T) {
 		impl.finalizeTermination(plan)
 
 		// Verify finalization results
-		assert.Equal(t, ProcessStateIdle, impl.state, "State should be Idle after termination finalization")
+		assert.Equal(t, processcontrol.ProcessStateIdle, impl.state, "State should be Idle after termination finalization")
 	})
 
 	t.Run("immediate_kill_plan_execute_finalize", func(t *testing.T) {
 		// Reset for immediate kill test
-		impl.state = ProcessStateRunning
+		impl.state = processcontrol.ProcessStateRunning
 		impl.process = &os.Process{Pid: 11111}
 
 		// PHASE 1: PLAN (validateAndPlanTermination for immediate kill)
@@ -99,17 +99,17 @@ func TestDeferOnlyLocking_PlanExecuteFinalizePattern(t *testing.T) {
 		// Verify planning results for immediate kill
 		require.NotNil(t, plan, "Immediate kill plan should be created")
 		assert.True(t, plan.shouldProceed, "Immediate kill plan should proceed")
-		assert.Equal(t, ProcessStateTerminating, plan.targetState, "Immediate kill should target Terminating state")
+		assert.Equal(t, processcontrol.ProcessStateTerminating, plan.targetState, "Immediate kill should target Terminating state")
 		assert.True(t, plan.skipGraceful, "Immediate kill should skip graceful termination")
 
 		// Verify state transition
-		assert.Equal(t, ProcessStateTerminating, impl.state, "State should be Terminating for immediate kill")
+		assert.Equal(t, processcontrol.ProcessStateTerminating, impl.state, "State should be Terminating for immediate kill")
 
 		// PHASE 3: FINALIZE (finalizeTermination)
 		impl.finalizeTermination(plan)
 
 		// Verify finalization
-		assert.Equal(t, ProcessStateIdle, impl.state, "State should be Idle after immediate kill finalization")
+		assert.Equal(t, processcontrol.ProcessStateIdle, impl.state, "State should be Idle after immediate kill finalization")
 	})
 }
 
@@ -123,7 +123,7 @@ func TestDeferOnlyLocking_DataTransferStructs(t *testing.T) {
 	impl := pc.(*processControl)
 
 	t.Run("stop_plan_data_structure", func(t *testing.T) {
-		impl.state = ProcessStateRunning
+		impl.state = processcontrol.ProcessStateRunning
 		impl.process = &os.Process{Pid: 12345}
 
 		plan := impl.validateAndPlanStop()
@@ -141,7 +141,7 @@ func TestDeferOnlyLocking_DataTransferStructs(t *testing.T) {
 	})
 
 	t.Run("termination_plan_data_structure", func(t *testing.T) {
-		impl.state = ProcessStateRunning
+		impl.state = processcontrol.ProcessStateRunning
 		impl.process = &os.Process{Pid: 54321}
 
 		plan := impl.validateAndPlanTermination(resourcelimits.ResourcePolicyGracefulShutdown, "test reason")
@@ -151,7 +151,7 @@ func TestDeferOnlyLocking_DataTransferStructs(t *testing.T) {
 
 		// Verify comprehensive data transfer
 		assert.NotNil(t, plan.processToTerminate, "Plan should transfer process reference")
-		assert.Equal(t, ProcessStateStopping, plan.targetState, "Plan should transfer target state")
+		assert.Equal(t, processcontrol.ProcessStateStopping, plan.targetState, "Plan should transfer target state")
 		assert.False(t, plan.skipGraceful, "Plan should transfer graceful flag")
 		assert.True(t, plan.shouldProceed, "Plan should transfer proceed decision")
 		assert.Nil(t, plan.errorToReturn, "Plan should transfer error state")
@@ -162,14 +162,14 @@ func TestDeferOnlyLocking_DataTransferStructs(t *testing.T) {
 
 	t.Run("plan_data_isolation", func(t *testing.T) {
 		// Test that plan data is isolated and doesn't interfere between operations
-		impl.state = ProcessStateRunning
+		impl.state = processcontrol.ProcessStateRunning
 		impl.process = &os.Process{Pid: 99999}
 
 		// Create multiple plans
 		stopPlan1 := impl.validateAndPlanStop()
 
 		// Reset state for second plan (simulating different operation)
-		impl.state = ProcessStateRunning
+		impl.state = processcontrol.ProcessStateRunning
 		impl.process = &os.Process{Pid: 88888}
 
 		termPlan := impl.validateAndPlanTermination(resourcelimits.ResourcePolicyImmediateKill, "isolation test")
@@ -190,7 +190,7 @@ func TestDeferOnlyLocking_LockScopedValidators(t *testing.T) {
 	impl := pc.(*processControl)
 
 	t.Run("validators_automatic_unlock", func(t *testing.T) {
-		impl.state = ProcessStateRunning
+		impl.state = processcontrol.ProcessStateRunning
 		impl.process = &os.Process{Pid: 12345}
 
 		// Test that validators automatically unlock via defer
@@ -207,16 +207,16 @@ func TestDeferOnlyLocking_LockScopedValidators(t *testing.T) {
 	t.Run("validators_state_validation_logic", func(t *testing.T) {
 		testCases := []struct {
 			name            string
-			initialState    ProcessState
+			initialState    processcontrol.ProcessState
 			hasProcess      bool
 			expectedProceed bool
 			expectedError   bool
 		}{
-			{"running_with_process", ProcessStateRunning, true, true, false},
-			{"idle_without_process", ProcessStateIdle, false, false, false},
-			{"starting_with_process", ProcessStateStarting, true, false, true},
-			{"stopping_with_process", ProcessStateStopping, true, false, true},
-			{"terminating_with_process", ProcessStateTerminating, true, false, true},
+			{"running_with_process", processcontrol.ProcessStateRunning, true, true, false},
+			{"idle_without_process", processcontrol.ProcessStateIdle, false, false, false},
+			{"starting_with_process", processcontrol.ProcessStateStarting, true, false, true},
+			{"stopping_with_process", processcontrol.ProcessStateStopping, true, false, true},
+			{"terminating_with_process", processcontrol.ProcessStateTerminating, true, false, true},
 		}
 
 		for _, tc := range testCases {
@@ -242,7 +242,7 @@ func TestDeferOnlyLocking_LockScopedValidators(t *testing.T) {
 	})
 
 	t.Run("validators_concurrent_safety", func(t *testing.T) {
-		impl.state = ProcessStateRunning
+		impl.state = processcontrol.ProcessStateRunning
 		impl.process = &os.Process{Pid: 12345}
 
 		// Test concurrent validation calls
@@ -281,7 +281,7 @@ func TestDeferOnlyLocking_LockScopedFinalizers(t *testing.T) {
 	impl := pc.(*processControl)
 
 	t.Run("finalizers_automatic_unlock", func(t *testing.T) {
-		impl.state = ProcessStateStopping
+		impl.state = processcontrol.ProcessStateStopping
 		impl.stdout = &MockReadCloser{}
 
 		startTime := time.Now()
@@ -291,12 +291,12 @@ func TestDeferOnlyLocking_LockScopedFinalizers(t *testing.T) {
 
 		duration := time.Since(startTime)
 		assert.Less(t, duration, 100*time.Millisecond, "Finalizer should complete quickly (no deadlock)")
-		assert.Equal(t, ProcessStateIdle, impl.state, "Finalizer should complete state transition")
+		assert.Equal(t, processcontrol.ProcessStateIdle, impl.state, "Finalizer should complete state transition")
 	})
 
 	t.Run("finalizers_resource_cleanup", func(t *testing.T) {
 		// Test that finalizers properly clean up resources
-		impl.state = ProcessStateStopping
+		impl.state = processcontrol.ProcessStateStopping
 		impl.stdout = &MockReadCloser{}
 
 		// Set up mocks with proper expectations for cleanup
@@ -311,7 +311,7 @@ func TestDeferOnlyLocking_LockScopedFinalizers(t *testing.T) {
 		impl.finalizeStop()
 
 		// Verify cleanup
-		assert.Equal(t, ProcessStateIdle, impl.state, "State should be finalized to Idle")
+		assert.Equal(t, processcontrol.ProcessStateIdle, impl.state, "State should be finalized to Idle")
 		assert.Nil(t, impl.stdout, "stdout should be cleaned up")
 		assert.Nil(t, impl.healthMonitor, "health monitor should be cleaned up")
 		assert.Nil(t, impl.resourceManager, "resource manager should be cleaned up")
@@ -321,18 +321,18 @@ func TestDeferOnlyLocking_LockScopedFinalizers(t *testing.T) {
 		// Test different finalization scenarios
 		scenarios := []struct {
 			name          string
-			initialState  ProcessState
-			expectedFinal ProcessState
+			initialState  processcontrol.ProcessState
+			expectedFinal processcontrol.ProcessState
 		}{
-			{"finalize_from_stopping", ProcessStateStopping, ProcessStateIdle},
-			{"finalize_from_terminating", ProcessStateTerminating, ProcessStateIdle},
+			{"finalize_from_stopping", processcontrol.ProcessStateStopping, processcontrol.ProcessStateIdle},
+			{"finalize_from_terminating", processcontrol.ProcessStateTerminating, processcontrol.ProcessStateIdle},
 		}
 
 		for _, scenario := range scenarios {
 			t.Run(scenario.name, func(t *testing.T) {
 				impl.state = scenario.initialState
 
-				if scenario.initialState == ProcessStateStopping {
+				if scenario.initialState == processcontrol.ProcessStateStopping {
 					impl.finalizeStop()
 				} else {
 					// Create a dummy plan for termination finalization
@@ -359,12 +359,12 @@ func TestDeferOnlyLocking_SafeDataAccess(t *testing.T) {
 	impl := pc.(*processControl)
 
 	t.Run("safe_state_getter", func(t *testing.T) {
-		testStates := []ProcessState{
-			ProcessStateIdle,
-			ProcessStateStarting,
-			ProcessStateRunning,
-			ProcessStateStopping,
-			ProcessStateTerminating,
+		testStates := []processcontrol.ProcessState{
+			processcontrol.ProcessStateIdle,
+			processcontrol.ProcessStateStarting,
+			processcontrol.ProcessStateRunning,
+			processcontrol.ProcessStateStopping,
+			processcontrol.ProcessStateTerminating,
 		}
 
 		for _, state := range testStates {
@@ -394,11 +394,11 @@ func TestDeferOnlyLocking_SafeDataAccess(t *testing.T) {
 	})
 
 	t.Run("safe_getters_concurrent_access", func(t *testing.T) {
-		impl.state = ProcessStateRunning
+		impl.state = processcontrol.ProcessStateRunning
 		impl.process = &os.Process{Pid: 99999}
 
 		var wg sync.WaitGroup
-		stateResults := make([]ProcessState, 50)
+		stateResults := make([]processcontrol.ProcessState, 50)
 		processResults := make([]*os.Process, 50)
 
 		// Concurrent state reads
@@ -415,7 +415,7 @@ func TestDeferOnlyLocking_SafeDataAccess(t *testing.T) {
 
 		// Verify all reads were consistent
 		for i, state := range stateResults {
-			assert.Equal(t, ProcessStateRunning, state, "State read %d should be consistent", i)
+			assert.Equal(t, processcontrol.ProcessStateRunning, state, "State read %d should be consistent", i)
 			if processResults[i] != nil {
 				assert.Equal(t, 99999, processResults[i].Pid, "Process read %d should be consistent", i)
 			}
@@ -423,7 +423,7 @@ func TestDeferOnlyLocking_SafeDataAccess(t *testing.T) {
 	})
 
 	t.Run("safe_getters_no_deadlock", func(t *testing.T) {
-		impl.state = ProcessStateRunning
+		impl.state = processcontrol.ProcessStateRunning
 		impl.process = &os.Process{Pid: 55555}
 
 		// Test that safe getters don't deadlock when called in quick succession
@@ -433,7 +433,7 @@ func TestDeferOnlyLocking_SafeDataAccess(t *testing.T) {
 			state := impl.safeGetState()
 			process := impl.safeGetProcess()
 
-			assert.Equal(t, ProcessStateRunning, state)
+			assert.Equal(t, processcontrol.ProcessStateRunning, state)
 			if process != nil {
 				assert.Equal(t, 55555, process.Pid)
 			}
@@ -511,7 +511,7 @@ func TestDeferOnlyLocking_UnifiedPolicyExecution(t *testing.T) {
 	impl := pc.(*processControl)
 
 	t.Run("execute_with_policy_pattern", func(t *testing.T) {
-		impl.state = ProcessStateRunning
+		impl.state = processcontrol.ProcessStateRunning
 		impl.process = &os.Process{Pid: 12345}
 
 		// Test the executeWithPolicy pattern for different policies
@@ -523,7 +523,7 @@ func TestDeferOnlyLocking_UnifiedPolicyExecution(t *testing.T) {
 		for _, policy := range policies {
 			t.Run(string(policy), func(t *testing.T) {
 				// Reset state
-				impl.state = ProcessStateRunning
+				impl.state = processcontrol.ProcessStateRunning
 				impl.process = &os.Process{Pid: 12345}
 
 				violation := &resourcelimits.ResourceViolation{
@@ -553,7 +553,7 @@ func TestDeferOnlyLocking_ArchitecturalBenefits(t *testing.T) {
 		// This test documents that our implementation has zero explicit mutex.Unlock() calls
 		// All unlocking is handled by defer statements
 
-		impl.state = ProcessStateRunning
+		impl.state = processcontrol.ProcessStateRunning
 		impl.process = &os.Process{Pid: 12345}
 
 		// These operations should complete without deadlock, proving defer-only works
@@ -561,12 +561,12 @@ func TestDeferOnlyLocking_ArchitecturalBenefits(t *testing.T) {
 		assert.NotNil(t, plan, "Plan should be created without explicit unlocks")
 
 		impl.finalizeStop()
-		assert.Equal(t, ProcessStateIdle, impl.state, "Finalize should work without explicit unlocks")
+		assert.Equal(t, processcontrol.ProcessStateIdle, impl.state, "Finalize should work without explicit unlocks")
 	})
 
 	t.Run("exception_safety_verification", func(t *testing.T) {
 		// Test that even if operations panic, locks are released via defer
-		impl.state = ProcessStateRunning
+		impl.state = processcontrol.ProcessStateRunning
 		impl.process = &os.Process{Pid: 12345}
 
 		// This would panic in executeViolationPolicy with nil violation, but locks should still be released
@@ -576,14 +576,14 @@ func TestDeferOnlyLocking_ArchitecturalBenefits(t *testing.T) {
 
 		// System should still be accessible (no deadlock)
 		state := impl.safeGetState()
-		assert.Contains(t, []ProcessState{ProcessStateRunning, ProcessStateIdle}, state, "System should remain accessible after panic")
+		assert.Contains(t, []processcontrol.ProcessState{processcontrol.ProcessStateRunning, processcontrol.ProcessStateIdle}, state, "System should remain accessible after panic")
 	})
 
 	t.Run("clarity_and_maintainability", func(t *testing.T) {
 		// Test documents the clarity benefits of defer-only locking
 		// Every lock scope is clearly defined and automatically managed
 
-		impl.state = ProcessStateRunning
+		impl.state = processcontrol.ProcessStateRunning
 		impl.process = &os.Process{Pid: 12345}
 
 		// Each operation has clear begin/end lock boundaries via defer
@@ -596,7 +596,7 @@ func TestDeferOnlyLocking_ArchitecturalBenefits(t *testing.T) {
 		duration := time.Since(start)
 
 		assert.True(t, plan.shouldProceed, "Plan should succeed")
-		assert.Equal(t, ProcessStateIdle, state, "Final state should be correct")
+		assert.Equal(t, processcontrol.ProcessStateIdle, state, "Final state should be correct")
 		assert.Less(t, duration, 100*time.Millisecond, "Operations should be fast with clear lock boundaries")
 	})
 }

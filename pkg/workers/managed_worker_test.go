@@ -73,11 +73,13 @@ func createTestManagedUnit() *ManagedUnit {
 				WorkingDirectory: workingDirectory,
 				WaitDelay:        5 * time.Second,
 			},
-			Restart: monitoring.RestartConfig{
-				Policy:      monitoring.RestartOnFailure,
-				MaxRetries:  3,
-				RetryDelay:  10 * time.Second,
-				BackoffRate: 2.0,
+			RestartPolicy: processcontrol.RestartOnFailure,
+			ContextAwareRestart: processcontrol.ContextAwareRestartConfig{
+				Default: processcontrol.RestartConfig{
+					MaxRetries:  3,
+					RetryDelay:  10 * time.Second,
+					BackoffRate: 2.0,
+				},
 			},
 			Limits: resourcelimits.ResourceLimits{
 				Memory: &resourcelimits.MemoryLimits{
@@ -153,11 +155,11 @@ func TestManagedWorker_ProcessControlOptions(t *testing.T) {
 	assert.NotNil(t, options.AttachCmd, "ManagedWorker should provide AttachCmd")
 
 	// Test restart configuration
-	require.NotNil(t, options.Restart)
-	assert.Equal(t, monitoring.RestartOnFailure, options.Restart.Policy)
-	assert.Equal(t, 3, options.Restart.MaxRetries)
-	assert.Equal(t, 10*time.Second, options.Restart.RetryDelay)
-	assert.Equal(t, 2.0, options.Restart.BackoffRate)
+	require.NotNil(t, options.ContextAwareRestart)
+	assert.Equal(t, processcontrol.RestartOnFailure, options.RestartPolicy)
+	assert.Equal(t, 3, options.ContextAwareRestart.Default.MaxRetries)
+	assert.Equal(t, 10*time.Second, options.ContextAwareRestart.Default.RetryDelay)
+	assert.Equal(t, 2.0, options.ContextAwareRestart.Default.BackoffRate)
 
 	// Test resource limits
 	require.NotNil(t, options.Limits)
@@ -272,11 +274,13 @@ func TestManagedWorker_ExecuteCmd_PIDFileWriting(t *testing.T) {
 			},
 			ProcessFile:     pidConfig,
 			GracefulTimeout: 30 * time.Second,
-			Restart: monitoring.RestartConfig{
-				Policy:      monitoring.RestartOnFailure,
-				MaxRetries:  3,
-				RetryDelay:  5 * time.Second,
-				BackoffRate: 2.0,
+			RestartPolicy:   processcontrol.RestartOnFailure,
+			ContextAwareRestart: processcontrol.ContextAwareRestartConfig{
+				Default: processcontrol.RestartConfig{
+					MaxRetries:  3,
+					RetryDelay:  5 * time.Second,
+					BackoffRate: 2.0,
+				},
 			},
 			Limits: resourcelimits.ResourceLimits{
 				Memory: &resourcelimits.MemoryLimits{

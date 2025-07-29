@@ -33,19 +33,21 @@ log_collection:
 workers:
   - id: "echotest"
     type: "managed"
+    profile_type: "web"
     unit:
       managed:
         metadata:
-          name: "Qdrant"
+          name: "Echo Test"
         control:
           execution:
             executable_path: "..\\..\\test\\echotest\\echotest.exe"
             args: ["--run-duration", "20", "--memory-mb", "100"]
-          restart:
-            policy: "on-failure"
-            max_retries: 3
-            retry_delay: "5s"
-            backoff_rate: 1.5
+          restart_policy: "on-failure"
+          context_aware_restart:
+            default:
+              max_retries: 3
+              retry_delay: "5s"
+              backoff_rate: 1.5
           limits:
             memory:
               max_rss: 1048576

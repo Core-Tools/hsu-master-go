@@ -46,15 +46,16 @@ func (w *integratedWorker) Metadata() UnitMetadata {
 
 func (w *integratedWorker) ProcessControlOptions() processcontrol.ProcessControlOptions {
 	return processcontrol.ProcessControlOptions{
-		CanAttach:       true,
-		CanTerminate:    true,
-		CanRestart:      true,
-		ExecuteCmd:      w.ExecuteCmd,
-		AttachCmd:       w.AttachCmd, // Use custom AttachCmd that creates dynamic gRPC health check
-		Restart:         &w.processControlConfig.Restart,
-		Limits:          &w.processControlConfig.Limits,
-		GracefulTimeout: w.processControlConfig.GracefulTimeout,
-		HealthCheck:     nil, // Provided by ExecuteCmd or AttachCmd
+		CanAttach:           true,
+		CanTerminate:        true,
+		CanRestart:          true,
+		ExecuteCmd:          w.ExecuteCmd,
+		AttachCmd:           w.AttachCmd,                                 // Use custom AttachCmd that creates dynamic gRPC health check
+		ContextAwareRestart: &w.processControlConfig.ContextAwareRestart, // ✅ NEW: Full context-aware restart config
+		RestartPolicy:       w.processControlConfig.RestartPolicy,        // ✅ NEW: Policy for health monitor
+		Limits:              &w.processControlConfig.Limits,
+		GracefulTimeout:     w.processControlConfig.GracefulTimeout,
+		HealthCheck:         nil, // Provided by ExecuteCmd or AttachCmd
 	}
 }
 

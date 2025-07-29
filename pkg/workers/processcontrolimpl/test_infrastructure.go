@@ -11,6 +11,7 @@ import (
 
 	"github.com/core-tools/hsu-master/pkg/monitoring"
 	"github.com/core-tools/hsu-master/pkg/resourcelimits"
+	"github.com/core-tools/hsu-master/pkg/workers/processcontrol"
 )
 
 // ===== SHARED TEST INFRASTRUCTURE =====
@@ -123,8 +124,8 @@ type MockRestartCircuitBreaker struct {
 	mock.Mock
 }
 
-func (m *MockRestartCircuitBreaker) ExecuteRestart(restartFunc RestartFunc) error {
-	args := m.Called(restartFunc)
+func (m *MockRestartCircuitBreaker) ExecuteRestart(restartFunc RestartFunc, context processcontrol.RestartContext) error {
+	args := m.Called(restartFunc, context)
 	return args.Error(0)
 }
 
@@ -132,7 +133,7 @@ func (m *MockRestartCircuitBreaker) Reset() {
 	m.Called()
 }
 
-func (m *MockRestartCircuitBreaker) GetState() string {
+func (m *MockRestartCircuitBreaker) GetState() CircuitBreakerState {
 	args := m.Called()
-	return args.String(0)
+	return args.Get(0).(CircuitBreakerState)
 }

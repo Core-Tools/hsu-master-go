@@ -2,46 +2,6 @@ package monitoring
 
 import "github.com/core-tools/hsu-master/pkg/errors"
 
-// ValidateRestartConfig validates restart configuration
-func ValidateRestartConfig(config RestartConfig) error {
-	// Validate restart policy
-	validPolicies := []RestartPolicy{
-		RestartNever,
-		RestartOnFailure,
-		RestartAlways,
-		RestartUnlessStopped,
-	}
-
-	isValid := false
-	for _, policy := range validPolicies {
-		if config.Policy == policy {
-			isValid = true
-			break
-		}
-	}
-
-	if !isValid {
-		return errors.NewValidationError("invalid restart policy: "+string(config.Policy), nil)
-	}
-
-	// Validate max retries
-	if config.MaxRetries < 0 {
-		return errors.NewValidationError("max retries cannot be negative", nil)
-	}
-
-	// Validate retry delay
-	if config.RetryDelay < 0 {
-		return errors.NewValidationError("retry delay cannot be negative", nil)
-	}
-
-	// Validate backoff rate
-	if config.BackoffRate < 1.0 {
-		return errors.NewValidationError("backoff rate must be at least 1.0", nil)
-	}
-
-	return nil
-}
-
 // ValidateHealthCheckConfig validates health check configuration
 func ValidateHealthCheckConfig(config HealthCheckConfig) error {
 	// Validate run options

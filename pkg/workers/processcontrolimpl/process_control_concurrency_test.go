@@ -27,7 +27,7 @@ func TestProcessControl_ConcurrentStateAccess(t *testing.T) {
 	impl := pc.(*processControl)
 
 	// Set to running state with a process
-	impl.state = ProcessStateRunning
+	impl.state = processcontrol.ProcessStateRunning
 	impl.process = &os.Process{Pid: 12345}
 
 	// Test high-frequency concurrent reads
@@ -46,7 +46,7 @@ func TestProcessControl_ConcurrentStateAccess(t *testing.T) {
 					process := impl.safeGetProcess()
 
 					// Verify consistency
-					assert.Contains(t, []ProcessState{ProcessStateRunning, ProcessStateIdle}, state)
+					assert.Contains(t, []processcontrol.ProcessState{processcontrol.ProcessStateRunning, processcontrol.ProcessStateIdle}, state)
 					if process != nil {
 						assert.Equal(t, 12345, process.Pid)
 					}
@@ -85,7 +85,7 @@ func TestProcessControl_ConcurrentStateAccess(t *testing.T) {
 					currentState := impl.safeGetState()
 
 					// Only test planning if in a valid state for planning
-					if currentState == ProcessStateRunning {
+					if currentState == processcontrol.ProcessStateRunning {
 						plan := impl.validateAndPlanStop()
 						// Don't actually modify state - just test the planning logic
 						_ = plan.shouldProceed
@@ -112,7 +112,7 @@ func TestProcessControl_ConcurrentOperationAttempts(t *testing.T) {
 
 	t.Run("concurrent_stop_attempts", func(t *testing.T) {
 		// Set up running state ONCE before concurrent access
-		impl.state = ProcessStateRunning
+		impl.state = processcontrol.ProcessStateRunning
 		impl.process = &os.Process{Pid: 12345}
 
 		var wg sync.WaitGroup
@@ -140,7 +140,7 @@ func TestProcessControl_ConcurrentOperationAttempts(t *testing.T) {
 
 		// After one successful planning, state should be stopping
 		finalState := impl.safeGetState()
-		assert.Equal(t, ProcessStateStopping, finalState, "State should be stopping after successful attempt")
+		assert.Equal(t, processcontrol.ProcessStateStopping, finalState, "State should be stopping after successful attempt")
 	})
 
 	t.Run("concurrent_start_validation", func(t *testing.T) {
@@ -156,7 +156,7 @@ func TestProcessControl_ConcurrentOperationAttempts(t *testing.T) {
 				defer wg.Done()
 
 				// Read-only validation - no state modification
-				if impl.canStartFromState(ProcessStateIdle) {
+				if impl.canStartFromState(processcontrol.ProcessStateIdle) {
 					atomic.AddInt32(&canStartCount, 1)
 				}
 			}()
@@ -184,7 +184,7 @@ func TestProcessControl_StateTransitionRace(t *testing.T) {
 		numCycles := 50
 
 		// Set initial state once
-		impl.state = ProcessStateRunning
+		impl.state = processcontrol.ProcessStateRunning
 		impl.process = &os.Process{Pid: 12345}
 
 		// Only safe read operations - no state modifications
@@ -196,9 +196,9 @@ func TestProcessControl_StateTransitionRace(t *testing.T) {
 			for i := 0; i < numCycles*10; i++ {
 				state := impl.GetState()
 				// Verify state is always valid
-				assert.Contains(t, []ProcessState{
-					ProcessStateIdle, ProcessStateStarting, ProcessStateRunning,
-					ProcessStateStopping, ProcessStateTerminating,
+				assert.Contains(t, []processcontrol.ProcessState{
+					processcontrol.ProcessStateIdle, processcontrol.ProcessStateStarting, processcontrol.ProcessStateRunning,
+					processcontrol.ProcessStateStopping, processcontrol.ProcessStateTerminating,
 				}, state)
 
 				time.Sleep(time.Nanosecond)
@@ -235,7 +235,7 @@ func TestProcessControl_DeferOnlyLocking_ConcurrentAccess(t *testing.T) {
 
 	t.Run("concurrent_planning_operations", func(t *testing.T) {
 		// Set up running state ONCE
-		impl.state = ProcessStateRunning
+		impl.state = processcontrol.ProcessStateRunning
 		impl.process = &os.Process{Pid: 12345}
 
 		var wg sync.WaitGroup
@@ -273,7 +273,7 @@ func TestProcessControl_DeferOnlyLocking_ConcurrentAccess(t *testing.T) {
 		for i := 0; i < 5; i++ {
 			pc := NewProcessControl(config, "test-worker", logger)
 			impl := pc.(*processControl)
-			impl.state = ProcessStateStopping
+			impl.state = processcontrol.ProcessStateStopping
 			impl.stdout = &MockReadCloser{}
 			processes = append(processes, impl)
 		}
@@ -286,7 +286,7 @@ func TestProcessControl_DeferOnlyLocking_ConcurrentAccess(t *testing.T) {
 			go func(p *processControl) {
 				defer wg.Done()
 				p.finalizeStop()
-				assert.Equal(t, ProcessStateIdle, p.GetState())
+				assert.Equal(t, processcontrol.ProcessStateIdle, p.GetState())
 			}(proc)
 		}
 
@@ -294,7 +294,7 @@ func TestProcessControl_DeferOnlyLocking_ConcurrentAccess(t *testing.T) {
 
 		// All should be in idle state
 		for i, proc := range processes {
-			assert.Equal(t, ProcessStateIdle, proc.GetState(), "Process %d should be idle", i)
+			assert.Equal(t, processcontrol.ProcessStateIdle, proc.GetState(), "Process %d should be idle", i)
 		}
 	})
 }
@@ -353,7 +353,7 @@ func TestProcessControl_MemoryConsistency(t *testing.T) {
 			defer wg.Done()
 			for i := 0; i < 100; i++ {
 				// Write state and process atomically through defer-only pattern
-				impl.state = ProcessStateRunning
+				impl.state = processcontrol.ProcessStateRunning
 				impl.process = &os.Process{Pid: int(12345 + i)}
 
 				time.Sleep(time.Microsecond)
@@ -375,7 +375,7 @@ func TestProcessControl_MemoryConsistency(t *testing.T) {
 					process := impl.safeGetProcess()
 
 					// Memory consistency check: if we see a process, state should be appropriate
-					if process != nil && state == ProcessStateIdle {
+					if process != nil && state == processcontrol.ProcessStateIdle {
 						// This would indicate a memory consistency issue
 						t.Errorf("Inconsistent memory state: process exists but state is idle")
 					}
@@ -405,7 +405,7 @@ func TestProcessControl_LockContention(t *testing.T) {
 		operationsPerContender := 50
 
 		// Set initial state
-		impl.state = ProcessStateRunning
+		impl.state = processcontrol.ProcessStateRunning
 		impl.process = &os.Process{Pid: 12345}
 
 		// High contention on lock
@@ -422,7 +422,7 @@ func TestProcessControl_LockContention(t *testing.T) {
 						plan := impl.validateAndPlanStop()
 						if plan.shouldProceed {
 							// Reset for next iteration
-							impl.state = ProcessStateRunning
+							impl.state = processcontrol.ProcessStateRunning
 							impl.process = &os.Process{Pid: 12345}
 						}
 					}
@@ -434,7 +434,7 @@ func TestProcessControl_LockContention(t *testing.T) {
 
 		// System should remain consistent
 		state := impl.GetState()
-		assert.Contains(t, []ProcessState{ProcessStateRunning, ProcessStateStopping, ProcessStateIdle}, state)
+		assert.Contains(t, []processcontrol.ProcessState{processcontrol.ProcessStateRunning, processcontrol.ProcessStateStopping, processcontrol.ProcessStateIdle}, state)
 	})
 }
 

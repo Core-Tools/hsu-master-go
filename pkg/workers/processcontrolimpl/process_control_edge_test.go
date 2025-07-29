@@ -72,7 +72,7 @@ func TestProcessControl_BoundaryConditions(t *testing.T) {
 
 		// Test with maximum possible PID
 		extremeProcess := &os.Process{Pid: 2147483647} // Max int32
-		impl.state = ProcessStateRunning
+		impl.state = processcontrol.ProcessStateRunning
 		impl.process = extremeProcess
 
 		safeProcess := impl.safeGetProcess()
@@ -128,7 +128,7 @@ func TestProcessControl_ErrorRecoveryScenarios(t *testing.T) {
 		impl := pc.(*processControl)
 
 		// Manually create invalid state combinations
-		impl.state = ProcessStateRunning
+		impl.state = processcontrol.ProcessStateRunning
 		impl.process = nil // Invalid: running state without process
 
 		// System actually handles this gracefully by returning an error in the plan
@@ -150,7 +150,7 @@ func TestProcessControl_ErrorRecoveryScenarios(t *testing.T) {
 		impl := pc.(*processControl)
 
 		// Create a process with invalid/corrupted data
-		impl.state = ProcessStateRunning
+		impl.state = processcontrol.ProcessStateRunning
 		impl.process = &os.Process{Pid: -1} // Invalid PID
 
 		safeProcess := impl.safeGetProcess()
@@ -166,7 +166,7 @@ func TestProcessControl_ErrorRecoveryScenarios(t *testing.T) {
 		pc := NewProcessControl(config, "panic-recovery-worker", logger)
 		impl := pc.(*processControl)
 
-		impl.state = ProcessStateRunning
+		impl.state = processcontrol.ProcessStateRunning
 		impl.process = &os.Process{Pid: 12345}
 
 		// Simulate panic recovery - system should remain accessible
@@ -182,7 +182,7 @@ func TestProcessControl_ErrorRecoveryScenarios(t *testing.T) {
 
 		// System should still be accessible after panic
 		state := impl.safeGetState()
-		assert.Contains(t, []ProcessState{ProcessStateRunning, ProcessStateIdle}, state, "System should remain accessible after panic")
+		assert.Contains(t, []processcontrol.ProcessState{processcontrol.ProcessStateRunning, processcontrol.ProcessStateIdle}, state, "System should remain accessible after panic")
 	})
 
 	t.Run("concurrent_operation_interference", func(t *testing.T) {
@@ -193,7 +193,7 @@ func TestProcessControl_ErrorRecoveryScenarios(t *testing.T) {
 		pc := NewProcessControl(config, "interference-worker", logger)
 		impl := pc.(*processControl)
 
-		impl.state = ProcessStateRunning
+		impl.state = processcontrol.ProcessStateRunning
 		impl.process = &os.Process{Pid: 12345}
 
 		var wg sync.WaitGroup
@@ -251,7 +251,7 @@ func TestProcessControl_ResourceExhaustionHandling(t *testing.T) {
 		err := pc.Start(ctx)
 
 		assert.Error(t, err, "Should fail to start without execute or attach commands")
-		assert.Equal(t, ProcessStateIdle, impl.GetState(), "Should remain in idle state after failure")
+		assert.Equal(t, processcontrol.ProcessStateIdle, impl.GetState(), "Should remain in idle state after failure")
 	})
 
 	t.Run("handle_resource_limit_without_manager", func(t *testing.T) {
@@ -290,7 +290,7 @@ func TestProcessControl_ResourceExhaustionHandling(t *testing.T) {
 		pc := NewProcessControl(config, "load-test-worker", logger)
 		impl := pc.(*processControl)
 
-		impl.state = ProcessStateRunning
+		impl.state = processcontrol.ProcessStateRunning
 		impl.process = &os.Process{Pid: 12345}
 
 		var wg sync.WaitGroup
@@ -317,7 +317,7 @@ func TestProcessControl_ResourceExhaustionHandling(t *testing.T) {
 
 		// System should remain in consistent state
 		state := impl.safeGetState()
-		assert.Contains(t, []ProcessState{ProcessStateRunning, ProcessStateIdle}, state, "System should remain consistent under massive load")
+		assert.Contains(t, []processcontrol.ProcessState{processcontrol.ProcessStateRunning, processcontrol.ProcessStateIdle}, state, "System should remain consistent under massive load")
 	})
 }
 
@@ -333,11 +333,11 @@ func TestProcessControl_UnusualSystemConditions(t *testing.T) {
 		impl := pc.(*processControl)
 
 		// Rapidly oscillate between different states
-		states := []ProcessState{
-			ProcessStateRunning,
-			ProcessStateIdle,
-			ProcessStateRunning,
-			ProcessStateIdle,
+		states := []processcontrol.ProcessState{
+			processcontrol.ProcessStateRunning,
+			processcontrol.ProcessStateIdle,
+			processcontrol.ProcessStateRunning,
+			processcontrol.ProcessStateIdle,
 		}
 
 		for i := 0; i < 100; i++ {
@@ -372,7 +372,7 @@ func TestProcessControl_UnusualSystemConditions(t *testing.T) {
 
 		err := pc.Start(ctx)
 		assert.Error(t, err, "Should fail with timeout")
-		assert.Equal(t, ProcessStateIdle, impl.GetState(), "Should remain idle after timeout")
+		assert.Equal(t, processcontrol.ProcessStateIdle, impl.GetState(), "Should remain idle after timeout")
 	})
 
 	t.Run("memory_pressure_simulation", func(t *testing.T) {
@@ -389,13 +389,13 @@ func TestProcessControl_UnusualSystemConditions(t *testing.T) {
 			processes[i] = &os.Process{Pid: i + 1000}
 		}
 
-		impl.state = ProcessStateRunning
+		impl.state = processcontrol.ProcessStateRunning
 		impl.process = processes[500] // Use one of the processes
 
 		// System should continue to function under memory pressure
 		for i := 0; i < 100; i++ {
 			state := impl.safeGetState()
-			assert.Equal(t, ProcessStateRunning, state, "Should maintain state under memory pressure")
+			assert.Equal(t, processcontrol.ProcessStateRunning, state, "Should maintain state under memory pressure")
 
 			process := impl.safeGetProcess()
 			assert.Equal(t, 1500, process.Pid, "Should maintain process reference under memory pressure")
@@ -451,11 +451,11 @@ func TestProcessControl_StateConsistencyEdgeCases(t *testing.T) {
 		pc := NewProcessControl(config, "atomicity-worker", logger)
 		impl := pc.(*processControl)
 
-		impl.state = ProcessStateRunning
+		impl.state = processcontrol.ProcessStateRunning
 		impl.process = &os.Process{Pid: 12345}
 
 		var wg sync.WaitGroup
-		stateSnapshots := make([]ProcessState, 100)
+		stateSnapshots := make([]processcontrol.ProcessState, 100)
 
 		// Capture state snapshots during transition
 		wg.Add(1)
@@ -482,9 +482,9 @@ func TestProcessControl_StateConsistencyEdgeCases(t *testing.T) {
 
 		// Verify state transitions are atomic (no invalid intermediate states)
 		for i, state := range stateSnapshots {
-			assert.Contains(t, []ProcessState{
-				ProcessStateIdle, ProcessStateStarting, ProcessStateRunning,
-				ProcessStateStopping, ProcessStateTerminating,
+			assert.Contains(t, []processcontrol.ProcessState{
+				processcontrol.ProcessStateIdle, processcontrol.ProcessStateStarting, processcontrol.ProcessStateRunning,
+				processcontrol.ProcessStateStopping, processcontrol.ProcessStateTerminating,
 			}, state, "Snapshot %d should have valid state", i)
 		}
 	})
@@ -497,7 +497,7 @@ func TestProcessControl_StateConsistencyEdgeCases(t *testing.T) {
 		pc := NewProcessControl(config, "observation-worker", logger)
 		impl := pc.(*processControl)
 
-		impl.state = ProcessStateRunning
+		impl.state = processcontrol.ProcessStateRunning
 		impl.process = &os.Process{Pid: 99999}
 
 		var wg sync.WaitGroup
@@ -518,18 +518,18 @@ func TestProcessControl_StateConsistencyEdgeCases(t *testing.T) {
 
 		// Verify observations are consistent
 		for i, obs := range observations {
-			state := obs[0].(ProcessState)
+			state := obs[0].(processcontrol.ProcessState)
 			process := obs[1].(*os.Process)
 
-			if state == ProcessStateRunning && process != nil {
+			if state == processcontrol.ProcessStateRunning && process != nil {
 				assert.Equal(t, 99999, process.Pid, "Observation %d: Running state should have correct process", i)
 			}
-			if state == ProcessStateIdle {
+			if state == processcontrol.ProcessStateIdle {
 				// Process might be nil or not, depending on timing
 			}
 
-			assert.Contains(t, []ProcessState{
-				ProcessStateIdle, ProcessStateRunning, ProcessStateStopping,
+			assert.Contains(t, []processcontrol.ProcessState{
+				processcontrol.ProcessStateIdle, processcontrol.ProcessStateRunning, processcontrol.ProcessStateStopping,
 			}, state, "Observation %d should have valid state", i)
 		}
 	})
@@ -574,10 +574,12 @@ func TestProcessControl_ExtremeConfigurationScenarios(t *testing.T) {
 		config := processcontrol.ProcessControlOptions{
 			CanTerminate: true,
 			CanRestart:   true,
-			Restart: &monitoring.RestartConfig{
-				MaxRetries:  0,              // No retries
-				RetryDelay:  24 * time.Hour, // Very long delay
-				BackoffRate: 1000.0,         // Extreme backoff
+			ContextAwareRestart: &processcontrol.ContextAwareRestartConfig{
+				Default: processcontrol.RestartConfig{
+					MaxRetries:  0,              // No retries
+					RetryDelay:  24 * time.Hour, // Very long delay
+					BackoffRate: 1000.0,         // Extreme backoff
+				},
 			},
 		}
 
@@ -585,8 +587,8 @@ func TestProcessControl_ExtremeConfigurationScenarios(t *testing.T) {
 		require.NotNil(t, pc)
 
 		impl := pc.(*processControl)
-		assert.Equal(t, 0, int(impl.config.Restart.MaxRetries), "Extreme restart config should be preserved")
-		assert.Equal(t, 24*time.Hour, impl.config.Restart.RetryDelay, "Extreme delay should be preserved")
-		assert.Equal(t, 1000.0, impl.config.Restart.BackoffRate, "Extreme backoff should be preserved")
+		assert.Equal(t, 0, int(impl.config.ContextAwareRestart.Default.MaxRetries), "Extreme restart config should be preserved")
+		assert.Equal(t, 24*time.Hour, impl.config.ContextAwareRestart.Default.RetryDelay, "Extreme delay should be preserved")
+		assert.Equal(t, 1000.0, impl.config.ContextAwareRestart.Default.BackoffRate, "Extreme backoff should be preserved")
 	})
 }

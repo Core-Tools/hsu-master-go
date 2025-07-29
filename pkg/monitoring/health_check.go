@@ -15,22 +15,6 @@ import (
 	"github.com/core-tools/hsu-master/pkg/processstate"
 )
 
-type RestartPolicy string
-
-const (
-	RestartNever         RestartPolicy = "never"
-	RestartOnFailure     RestartPolicy = "on-failure"
-	RestartAlways        RestartPolicy = "always"
-	RestartUnlessStopped RestartPolicy = "unless-stopped"
-)
-
-type RestartConfig struct {
-	Policy      RestartPolicy `yaml:"policy"`
-	MaxRetries  int           `yaml:"max_retries"`
-	RetryDelay  time.Duration `yaml:"retry_delay"`
-	BackoffRate float64       `yaml:"backoff_rate"` // Exponential backoff multiplier
-}
-
 type HealthCheckType string
 
 const (
@@ -106,7 +90,6 @@ type HealthCheckState struct {
 	Message              string
 	ConsecutiveFailures  int
 	ConsecutiveSuccesses int
-	Retries              int
 }
 
 // HealthRestartCallback defines a callback function for triggering restarts on health failures
@@ -134,7 +117,6 @@ type healthMonitor struct {
 	processInfo      *ProcessInfo           // Add process information for health checking
 	restartCallback  HealthRestartCallback  // Callback for triggering restarts
 	recoveryCallback HealthRecoveryCallback // Callback for health recovery
-	restartPolicy    *RestartConfig         // Restart policy configuration
 }
 
 // ProcessInfo holds process information needed for health monitoring
@@ -161,19 +143,6 @@ func NewHealthMonitorWithProcessInfo(config *HealthCheckConfig, id string, proce
 		logger:      logger,
 		id:          id,
 		processInfo: processInfo,
-	}
-}
-
-// NewHealthMonitorWithRestart creates a health monitor with restart capability
-func NewHealthMonitorWithRestart(config *HealthCheckConfig, id string, processInfo *ProcessInfo, restartPolicy *RestartConfig, logger logging.Logger) HealthMonitor {
-	return &healthMonitor{
-		config:        config,
-		state:         &HealthCheckState{Status: HealthCheckStatusUnknown},
-		stopChan:      make(chan struct{}),
-		logger:        logger,
-		id:            id,
-		processInfo:   processInfo,
-		restartPolicy: restartPolicy,
 	}
 }
 
@@ -283,7 +252,7 @@ func (h *healthMonitor) updateState(isHealthy bool, message string) {
 	if isHealthy {
 		h.state.ConsecutiveSuccesses++
 		h.state.ConsecutiveFailures = 0
-		h.state.Retries = 0
+		// ✅ REMOVED: h.state.Retries = 0
 
 		previousWasUnhealthy := previousStatus == HealthCheckStatusDegraded || previousStatus == HealthCheckStatusUnhealthy
 
@@ -323,55 +292,27 @@ func (h *healthMonitor) updateState(isHealthy bool, message string) {
 				h.id, h.state.Status, h.state.ConsecutiveFailures, message)
 		}
 
-		// Check if we should trigger a restart
+		// ✅ SIMPLIFIED: Check restart condition without retry counting
 		h.checkRestartCondition(message)
 	}
 
 	h.state.Message = message
 }
 
-// checkRestartCondition determines if a restart should be triggered based on health failures
+// checkRestartCondition now just calls callback, policy evaluation moved to processcontrolimpl
 func (h *healthMonitor) checkRestartCondition(message string) {
-	// Only trigger restart if we have both restart policy and callback
-	if h.restartPolicy == nil || h.restartCallback == nil {
+	// Only trigger restart if we have restart callback
+	if h.restartCallback == nil {
 		return
 	}
 
-	// Check restart policy
-	shouldRestart := false
-	switch h.restartPolicy.Policy {
-	case RestartAlways:
-		shouldRestart = true
-	case RestartOnFailure:
-		// Restart on health check failures if we've reached the threshold
-		shouldRestart = h.state.Status == HealthCheckStatusUnhealthy
-	case RestartUnlessStopped:
-		// Similar to always, but should check if process was intentionally stopped
-		shouldRestart = h.state.Status == HealthCheckStatusUnhealthy
-	case RestartNever:
-		shouldRestart = false
-	}
+	h.logger.Warnf("Triggering restart due to health check failure, id: %s, reason: %s",
+		h.id, message)
 
-	if !shouldRestart {
-		return
-	}
-
-	// Check if we've exceeded max retries
-	if h.restartPolicy.MaxRetries > 0 && h.state.Retries >= h.restartPolicy.MaxRetries {
-		h.logger.Errorf("Max restart retries exceeded, id: %s, retries: %d, max: %d",
-			h.id, h.state.Retries, h.restartPolicy.MaxRetries)
-		return
-	}
-
-	// Trigger restart
-	h.state.Retries++
-	h.logger.Warnf("Triggering restart due to health check failure, id: %s, retry: %d, reason: %s",
-		h.id, h.state.Retries, message)
-
-	// Call restart callback in a goroutine to avoid blocking health check loop
+	// Always call callback, let processcontrolimpl handle policy evaluation
 	go func() {
 		if err := h.restartCallback(fmt.Sprintf("Health check failure: %s", message)); err != nil {
-			h.logger.Errorf("Failed to trigger restart, id: %s, error: %v", h.id, err)
+			h.logger.Errorf("Restart callback failed, id: %s, error: %v", h.id, err)
 		}
 	}()
 }

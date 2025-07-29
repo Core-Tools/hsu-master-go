@@ -63,10 +63,14 @@ func TestProcessControl_NewProcessControl(t *testing.T) {
 						Policy: resourcelimits.ResourcePolicyLog,
 					},
 				},
-				Restart: &monitoring.RestartConfig{
-					MaxRetries: 3,
-					RetryDelay: 5 * time.Second,
+				ContextAwareRestart: &processcontrol.ContextAwareRestartConfig{
+					Default: processcontrol.RestartConfig{
+						MaxRetries:  3,
+						RetryDelay:  5 * time.Second,
+						BackoffRate: 1.5,
+					},
 				},
+				RestartPolicy: processcontrol.RestartOnFailure,
 			},
 			workerID:    "full-featured-worker",
 			expectError: false,
@@ -97,7 +101,7 @@ func TestProcessControl_NewProcessControl(t *testing.T) {
 
 				// Verify initial state
 				if impl, ok := pc.(*processControl); ok {
-					assert.Equal(t, ProcessStateIdle, impl.GetState())
+					assert.Equal(t, processcontrol.ProcessStateIdle, impl.GetState())
 					assert.Equal(t, tt.workerID, impl.workerID)
 					assert.Equal(t, tt.config.CanAttach, impl.config.CanAttach)
 					assert.Equal(t, tt.config.CanTerminate, impl.config.CanTerminate)
@@ -119,7 +123,7 @@ func TestProcessControl_Start_ComprehensiveScenarios(t *testing.T) {
 		setupConfig   func() processcontrol.ProcessControlOptions
 		setupContext  func() context.Context
 		expectError   bool
-		expectedState ProcessState
+		expectedState processcontrol.ProcessState
 		description   string
 	}{
 		{
@@ -135,7 +139,7 @@ func TestProcessControl_Start_ComprehensiveScenarios(t *testing.T) {
 			},
 			setupContext:  func() context.Context { return context.Background() },
 			expectError:   false,
-			expectedState: ProcessStateRunning,
+			expectedState: processcontrol.ProcessStateRunning,
 			description:   "Normal start with execute should succeed",
 		},
 		{
@@ -152,7 +156,7 @@ func TestProcessControl_Start_ComprehensiveScenarios(t *testing.T) {
 			},
 			setupContext:  func() context.Context { return context.Background() },
 			expectError:   false,
-			expectedState: ProcessStateRunning,
+			expectedState: processcontrol.ProcessStateRunning,
 			description:   "Normal start with attach should succeed",
 		},
 		{
@@ -178,7 +182,7 @@ func TestProcessControl_Start_ComprehensiveScenarios(t *testing.T) {
 				return ctx
 			},
 			expectError:   true,
-			expectedState: ProcessStateIdle,
+			expectedState: processcontrol.ProcessStateIdle,
 			description:   "Start with cancelled context should fail",
 		},
 		{
@@ -193,7 +197,7 @@ func TestProcessControl_Start_ComprehensiveScenarios(t *testing.T) {
 			},
 			setupContext:  func() context.Context { return nil },
 			expectError:   true,
-			expectedState: ProcessStateIdle,
+			expectedState: processcontrol.ProcessStateIdle,
 			description:   "Start with nil context should fail",
 		},
 		{
@@ -206,7 +210,7 @@ func TestProcessControl_Start_ComprehensiveScenarios(t *testing.T) {
 			},
 			setupContext:  func() context.Context { return context.Background() },
 			expectError:   true,
-			expectedState: ProcessStateIdle,
+			expectedState: processcontrol.ProcessStateIdle,
 			description:   "Start without execute or attach commands should fail",
 		},
 		{
@@ -221,7 +225,7 @@ func TestProcessControl_Start_ComprehensiveScenarios(t *testing.T) {
 			},
 			setupContext:  func() context.Context { return context.Background() },
 			expectError:   true,
-			expectedState: ProcessStateIdle,
+			expectedState: processcontrol.ProcessStateIdle,
 			description:   "Failed execute command should return error and reset state",
 		},
 		{
@@ -240,7 +244,7 @@ func TestProcessControl_Start_ComprehensiveScenarios(t *testing.T) {
 			},
 			setupContext:  func() context.Context { return context.Background() },
 			expectError:   false,
-			expectedState: ProcessStateRunning,
+			expectedState: processcontrol.ProcessStateRunning,
 			description:   "Failed attach should fallback to execute successfully",
 		},
 	}
@@ -276,52 +280,52 @@ func TestProcessControl_Stop_ComprehensiveScenarios(t *testing.T) {
 		setupProcess  func(*processControl)
 		setupContext  func() context.Context
 		expectError   bool
-		expectedState ProcessState
+		expectedState processcontrol.ProcessState
 		description   string
 	}{
 		{
 			name: "successful_stop_from_running",
 			setupProcess: func(impl *processControl) {
-				impl.state = ProcessStateRunning
+				impl.state = processcontrol.ProcessStateRunning
 				impl.process = &os.Process{Pid: 12345}
 				impl.stdout = &MockReadCloser{}
 			},
 			setupContext:  func() context.Context { return context.Background() },
 			expectError:   false,
-			expectedState: ProcessStateIdle,
+			expectedState: processcontrol.ProcessStateIdle,
 			description:   "Normal stop from running should succeed",
 		},
 		{
 			name: "stop_from_idle_noop",
 			setupProcess: func(impl *processControl) {
-				impl.state = ProcessStateIdle
+				impl.state = processcontrol.ProcessStateIdle
 				impl.process = nil
 			},
 			setupContext:  func() context.Context { return context.Background() },
 			expectError:   false,
-			expectedState: ProcessStateIdle,
+			expectedState: processcontrol.ProcessStateIdle,
 			description:   "Stop from idle should be no-op but successful",
 		},
 		{
 			name: "stop_with_nil_context",
 			setupProcess: func(impl *processControl) {
-				impl.state = ProcessStateRunning
+				impl.state = processcontrol.ProcessStateRunning
 				impl.process = &os.Process{Pid: 12345}
 			},
 			setupContext:  func() context.Context { return nil },
 			expectError:   true,
-			expectedState: ProcessStateRunning,
+			expectedState: processcontrol.ProcessStateRunning,
 			description:   "Stop with nil context should fail",
 		},
 		{
 			name: "stop_from_invalid_state",
 			setupProcess: func(impl *processControl) {
-				impl.state = ProcessStateStarting
+				impl.state = processcontrol.ProcessStateStarting
 				impl.process = &os.Process{Pid: 12345}
 			},
 			setupContext:  func() context.Context { return context.Background() },
 			expectError:   true,
-			expectedState: ProcessStateStarting,
+			expectedState: processcontrol.ProcessStateStarting,
 			description:   "Stop from invalid state should fail",
 		},
 	}
@@ -346,11 +350,11 @@ func TestProcessControl_Stop_ComprehensiveScenarios(t *testing.T) {
 					// Test the defer-only locking pattern directly
 					plan := impl.validateAndPlanStop()
 					require.True(t, plan.shouldProceed)
-					assert.Equal(t, ProcessStateStopping, impl.state)
+					assert.Equal(t, processcontrol.ProcessStateStopping, impl.state)
 
 					// Simulate successful termination by calling finalize
 					impl.finalizeStop()
-					assert.Equal(t, ProcessStateIdle, impl.state)
+					assert.Equal(t, processcontrol.ProcessStateIdle, impl.state)
 					return
 				}
 
@@ -359,7 +363,7 @@ func TestProcessControl_Stop_ComprehensiveScenarios(t *testing.T) {
 					plan := impl.validateAndPlanStop()
 					assert.False(t, plan.shouldProceed)
 					assert.Nil(t, plan.errorToReturn)
-					assert.Equal(t, ProcessStateIdle, impl.state)
+					assert.Equal(t, processcontrol.ProcessStateIdle, impl.state)
 					return
 				}
 			}
@@ -403,13 +407,13 @@ func TestProcessControl_Restart_ComprehensiveScenarios(t *testing.T) {
 		setupConfig   func() processcontrol.ProcessControlOptions
 		setupContext  func() context.Context
 		expectError   bool
-		expectedState ProcessState
+		expectedState processcontrol.ProcessState
 		description   string
 	}{
 		{
 			name: "successful_restart_from_running",
 			setupProcess: func(impl *processControl) {
-				impl.state = ProcessStateRunning
+				impl.state = processcontrol.ProcessStateRunning
 				impl.process = &os.Process{Pid: 12345}
 				impl.stdout = &MockReadCloser{}
 			},
@@ -425,13 +429,13 @@ func TestProcessControl_Restart_ComprehensiveScenarios(t *testing.T) {
 			},
 			setupContext:  func() context.Context { return context.Background() },
 			expectError:   false,
-			expectedState: ProcessStateRunning,
+			expectedState: processcontrol.ProcessStateRunning,
 			description:   "Normal restart should succeed",
 		},
 		{
 			name: "restart_from_idle_should_fail",
 			setupProcess: func(impl *processControl) {
-				impl.state = ProcessStateIdle
+				impl.state = processcontrol.ProcessStateIdle
 				impl.process = nil
 			},
 			setupConfig: func() processcontrol.ProcessControlOptions {
@@ -445,13 +449,13 @@ func TestProcessControl_Restart_ComprehensiveScenarios(t *testing.T) {
 			},
 			setupContext:  func() context.Context { return context.Background() },
 			expectError:   true,
-			expectedState: ProcessStateIdle,
+			expectedState: processcontrol.ProcessStateIdle,
 			description:   "Restart from idle should fail (no process to restart)",
 		},
 		{
 			name: "restart_without_permission",
 			setupProcess: func(impl *processControl) {
-				impl.state = ProcessStateRunning
+				impl.state = processcontrol.ProcessStateRunning
 				impl.process = &os.Process{Pid: 12345}
 			},
 			setupConfig: func() processcontrol.ProcessControlOptions {
@@ -465,13 +469,13 @@ func TestProcessControl_Restart_ComprehensiveScenarios(t *testing.T) {
 			},
 			setupContext:  func() context.Context { return context.Background() },
 			expectError:   true,
-			expectedState: ProcessStateRunning,
+			expectedState: processcontrol.ProcessStateRunning,
 			description:   "Restart without permission should fail",
 		},
 		{
 			name: "restart_with_nil_context",
 			setupProcess: func(impl *processControl) {
-				impl.state = ProcessStateRunning
+				impl.state = processcontrol.ProcessStateRunning
 				impl.process = &os.Process{Pid: 12345}
 			},
 			setupConfig: func() processcontrol.ProcessControlOptions {
@@ -485,7 +489,7 @@ func TestProcessControl_Restart_ComprehensiveScenarios(t *testing.T) {
 			},
 			setupContext:  func() context.Context { return nil },
 			expectError:   true,
-			expectedState: ProcessStateRunning,
+			expectedState: processcontrol.ProcessStateRunning,
 			description:   "Restart with nil context should fail",
 		},
 	}
@@ -507,14 +511,14 @@ func TestProcessControl_Restart_ComprehensiveScenarios(t *testing.T) {
 				// Test restart logic by testing stop planning + start capability
 				stopPlan := impl.validateAndPlanStop()
 				require.True(t, stopPlan.shouldProceed, "Should be able to plan stop for restart")
-				assert.Equal(t, ProcessStateStopping, impl.state)
+				assert.Equal(t, processcontrol.ProcessStateStopping, impl.state)
 
 				// Simulate successful stop
 				impl.finalizeStop()
-				assert.Equal(t, ProcessStateIdle, impl.state)
+				assert.Equal(t, processcontrol.ProcessStateIdle, impl.state)
 
 				// Test that we can start again (simulate restart completion)
-				assert.True(t, impl.canStartFromState(ProcessStateIdle))
+				assert.True(t, impl.canStartFromState(processcontrol.ProcessStateIdle))
 				return
 			}
 
@@ -522,7 +526,7 @@ func TestProcessControl_Restart_ComprehensiveScenarios(t *testing.T) {
 			if tt.expectError {
 				if ctx == nil {
 					// Test nil context rejection
-					err := pc.Restart(ctx)
+					err := pc.Restart(ctx, false) // Test normal behavior, not forced
 					assert.Error(t, err)
 					assert.Equal(t, tt.expectedState, impl.GetState())
 					return
@@ -534,9 +538,9 @@ func TestProcessControl_Restart_ComprehensiveScenarios(t *testing.T) {
 					return
 				}
 
-				if impl.state == ProcessStateIdle {
+				if impl.state == processcontrol.ProcessStateIdle {
 					// Test restart from idle failure
-					err := pc.Restart(ctx)
+					err := pc.Restart(ctx, false) // Test normal behavior, not forced
 					assert.Error(t, err)
 					assert.Equal(t, tt.expectedState, impl.GetState())
 					return
@@ -559,10 +563,10 @@ func TestProcessControl_GetState_ThreadSafety(t *testing.T) {
 	impl := pc.(*processControl)
 
 	// Test that GetState is consistent
-	impl.state = ProcessStateRunning
+	impl.state = processcontrol.ProcessStateRunning
 	for i := 0; i < 100; i++ {
 		state := impl.GetState()
-		assert.Equal(t, ProcessStateRunning, state, "GetState should be consistent")
+		assert.Equal(t, processcontrol.ProcessStateRunning, state, "GetState should be consistent")
 	}
 }
 

@@ -166,7 +166,7 @@ func TestUnmanagedWorker_ProcessControlOptions_PIDFile(t *testing.T) {
 	assert.Nil(t, options.ExecuteCmd, "UnmanagedWorker should not provide ExecuteCmd")
 
 	// Test restart configuration is not present
-	assert.Nil(t, options.Restart, "UnmanagedWorker should not provide restart configuration")
+	assert.Nil(t, options.ContextAwareRestart, "UnmanagedWorker should not provide restart configuration")
 
 	// Test resource limits are not present
 	assert.Nil(t, options.Limits, "UnmanagedWorker should not provide resource limits")

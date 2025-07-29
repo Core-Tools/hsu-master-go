@@ -235,17 +235,17 @@ func GetConfigSummary(config *MasterConfig) ConfigSummary {
 
 		// Add type-specific information
 		switch worker.Type {
-		case WorkerTypeManaged:
+		case WorkerManagementTypeManaged:
 			if worker.Unit.Managed != nil {
 				workerSummary.ExecutablePath = worker.Unit.Managed.Control.Execution.ExecutablePath
 				workerSummary.HealthCheckType = string(worker.Unit.Managed.HealthCheck.Type)
 			}
-		case WorkerTypeUnmanaged:
+		case WorkerManagementTypeUnmanaged:
 			if worker.Unit.Unmanaged != nil {
 				workerSummary.DiscoveryMethod = string(worker.Unit.Unmanaged.Discovery.Method)
 				workerSummary.HealthCheckType = string(worker.Unit.Unmanaged.HealthCheck.Type)
 			}
-		case WorkerTypeIntegrated:
+		case WorkerManagementTypeIntegrated:
 			if worker.Unit.Integrated != nil {
 				workerSummary.ExecutablePath = worker.Unit.Integrated.Control.Execution.ExecutablePath
 			}

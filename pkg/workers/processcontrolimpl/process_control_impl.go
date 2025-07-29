@@ -17,16 +17,25 @@ import (
 	"github.com/core-tools/hsu-master/pkg/workers/processcontrol"
 )
 
-// ProcessState represents the current lifecycle state of the process control
-type ProcessState string
-
-const (
-	ProcessStateIdle        ProcessState = "idle"        // No process, ready to start
-	ProcessStateStarting    ProcessState = "starting"    // Process startup in progress
-	ProcessStateRunning     ProcessState = "running"     // Process running normally
-	ProcessStateStopping    ProcessState = "stopping"    // Graceful shutdown initiated
-	ProcessStateTerminating ProcessState = "terminating" // Force termination in progress
-)
+// shouldRestartBasedOnPolicy evaluates restart policy (moved from health monitor for better encapsulation)
+func shouldRestartBasedOnPolicy(policy processcontrol.RestartPolicy, status monitoring.HealthCheckStatus) bool {
+	switch policy {
+	case processcontrol.RestartAlways:
+		return true
+	case processcontrol.RestartOnFailure:
+		// Restart on health check failures if we've reached unhealthy status
+		return status == monitoring.HealthCheckStatusUnhealthy
+	case processcontrol.RestartUnlessStopped:
+		// Similar to always, but should check if process was intentionally stopped
+		// For now, treat same as RestartOnFailure
+		return status == monitoring.HealthCheckStatusUnhealthy
+	case processcontrol.RestartNever:
+		return false
+	default:
+		// Unknown policy, default to no restart
+		return false
+	}
+}
 
 type processControl struct {
 	config   processcontrol.ProcessControlOptions
@@ -44,24 +53,38 @@ type processControl struct {
 	// Resource limit management
 	resourceManager resourcelimits.ResourceLimitManager
 
-	// Persistent restart tracking (survives health monitor recreation)
+	// Context-aware restart circuit breaker
 	restartCircuitBreaker RestartCircuitBreaker
 
-	// Log collection (NEW)
+	// Log collection
 	logCollectionActive bool // Track if log collection is active for this worker
 
 	// Process lifecycle state management
-	state ProcessState
+	state processcontrol.ProcessState
+
+	// Worker profile type for context-aware restart decisions
+	workerProfileType string
 
 	// Mutex to protect concurrent access to fields
 	mutex sync.RWMutex
 }
 
 func NewProcessControl(config processcontrol.ProcessControlOptions, workerID string, logger logging.Logger) processcontrol.ProcessControl {
+	// Create context-aware circuit breaker if restart is enabled
 	var restartCircuitBreaker RestartCircuitBreaker
-	if config.Restart != nil && config.CanRestart {
+	if config.ContextAwareRestart != nil && config.CanRestart {
+		// ✅ NEW: Use provided ContextAwareRestartConfig directly (no more hard-coded construction!)
+		logger.Infof("Using provided context-aware restart configuration for worker %s", workerID)
+
+		// Determine worker profile type from configuration or use default
+		workerProfileType := "default"
+		if config.WorkerProfileType != "" {
+			workerProfileType = config.WorkerProfileType
+		}
+
+		// Use the provided configuration directly
 		restartCircuitBreaker = NewRestartCircuitBreaker(
-			config.Restart, workerID, logger)
+			config.ContextAwareRestart, workerID, workerProfileType, logger)
 	}
 
 	return &processControl{
@@ -69,7 +92,8 @@ func NewProcessControl(config processcontrol.ProcessControlOptions, workerID str
 		logger:                logger,
 		workerID:              workerID,
 		restartCircuitBreaker: restartCircuitBreaker,
-		state:                 ProcessStateIdle, // ✅ Initialize to idle state
+		state:                 processcontrol.ProcessStateIdle, // ✅ Initialize to idle state
+		workerProfileType:     config.WorkerProfileType,        // ✅ RENAMED field
 	}
 }
 
@@ -95,7 +119,7 @@ func (pc *processControl) Stop(ctx context.Context) error {
 	return pc.stopInternal(ctx, false)
 }
 
-func (pc *processControl) Restart(ctx context.Context) error {
+func (pc *processControl) Restart(ctx context.Context, force bool) error {
 	// Validate context
 	if ctx == nil {
 		return errors.NewValidationError("context cannot be nil", nil)
@@ -105,12 +129,39 @@ func (pc *processControl) Restart(ctx context.Context) error {
 		return errors.NewProcessError("process not attached", nil)
 	}
 
-	return pc.restartInternal(ctx, false) // normally, running process -> false
+	pc.logger.Infof("Restart requested, worker: %s, force: %t", pc.workerID, force)
+
+	// If force=true, bypass circuit breaker for immediate restart
+	if force {
+		pc.logger.Infof("Force restart: bypassing circuit breaker, worker: %s", pc.workerID)
+		return pc.restartInternal(ctx, false)
+	}
+
+	// If force=false, use circuit breaker safety mechanisms (default/recommended)
+	restartContext := processcontrol.RestartContext{
+		TriggerType:       processcontrol.RestartTriggerManual,
+		Severity:          "critical",
+		WorkerProfileType: pc.workerProfileType,
+		Message:           "Manual restart request",
+	}
+
+	// Circuit breaker handles all context-aware logic and logging
+	if pc.restartCircuitBreaker != nil {
+		pc.logger.Infof("Safe restart: using circuit breaker, worker: %s", pc.workerID)
+		wrappedRestart := func() error {
+			return pc.restartInternal(ctx, false) // normally, running process -> false
+		}
+		return pc.restartCircuitBreaker.ExecuteRestart(wrappedRestart, restartContext)
+	}
+
+	// Fallback if no circuit breaker configured
+	pc.logger.Warnf("No circuit breaker configured, proceeding with direct restart, worker: %s", pc.workerID)
+	return pc.restartInternal(ctx, false)
 }
 
 // GetState returns the current process state (for monitoring/debugging)
 // ✅ DEFER-ONLY: Uses automatic unlock
-func (pc *processControl) GetState() ProcessState {
+func (pc *processControl) GetState() processcontrol.ProcessState {
 	return pc.safeGetState()
 }
 
@@ -129,11 +180,11 @@ func (pc *processControl) startInternal(ctx context.Context) error {
 	}
 
 	// Set state to starting to prevent concurrent operations
-	pc.state = ProcessStateStarting
+	pc.state = processcontrol.ProcessStateStarting
 
 	process, stdout, healthCheckConfig, err := pc.startProcess(ctx)
 	if err != nil {
-		pc.state = ProcessStateIdle // ✅ Reset state on failure
+		pc.state = processcontrol.ProcessStateIdle // ✅ Reset state on failure
 		return errors.NewInternalError("failed to start process", err)
 	}
 
@@ -180,7 +231,7 @@ func (pc *processControl) startInternal(ctx context.Context) error {
 	pc.resourceManager = resourceManager
 
 	// ✅ Process successfully started and running
-	pc.state = ProcessStateRunning
+	pc.state = processcontrol.ProcessStateRunning
 
 	pc.logger.Infof("Process control started, worker: %s", pc.workerID)
 
@@ -188,17 +239,17 @@ func (pc *processControl) startInternal(ctx context.Context) error {
 }
 
 // canStartFromState validates if starting is allowed from the current state
-func (pc *processControl) canStartFromState(currentState ProcessState) bool {
+func (pc *processControl) canStartFromState(currentState processcontrol.ProcessState) bool {
 	switch currentState {
-	case ProcessStateIdle:
+	case processcontrol.ProcessStateIdle:
 		return true // ✅ Can start from idle
-	case ProcessStateStarting:
+	case processcontrol.ProcessStateStarting:
 		return false // ❌ Already starting
-	case ProcessStateRunning:
+	case processcontrol.ProcessStateRunning:
 		return false // ❌ Already running
-	case ProcessStateStopping:
+	case processcontrol.ProcessStateStopping:
 		return false // ❌ Still stopping, wait for completion
-	case ProcessStateTerminating:
+	case processcontrol.ProcessStateTerminating:
 		return false // ❌ Still terminating, wait for completion
 	default:
 		return false // ❌ Unknown state
@@ -275,33 +326,48 @@ func (pc *processControl) startHealthCheck(ctx context.Context, pid int, healthC
 		PID: pid, // Only PID needed
 	}
 
-	// Create health monitor with appropriate capabilities
+	// Create health monitor with process info for all restart scenarios
 	if healthCheckConfig.Type == monitoring.HealthCheckTypeProcess {
-		if pc.config.Restart != nil && pc.config.CanRestart {
-			// Create health monitor with restart capability
-			healthMonitor = monitoring.NewHealthMonitorWithRestart(healthCheckConfig,
-				pc.workerID, processInfo, pc.config.Restart, pc.logger)
-		} else {
-			// Create health monitor with process info but no restart
-			healthMonitor = monitoring.NewHealthMonitorWithProcessInfo(healthCheckConfig,
-				pc.workerID, processInfo, pc.logger)
-		}
+		// Create health monitor with process info but no restart
+		healthMonitor = monitoring.NewHealthMonitorWithProcessInfo(
+			healthCheckConfig, pc.workerID, processInfo, pc.logger)
 	} else {
 		// For other health check types, create standard monitor
-		healthMonitor = monitoring.NewHealthMonitor(healthCheckConfig, pc.workerID, pc.logger)
+		healthMonitor = monitoring.NewHealthMonitor(
+			healthCheckConfig, pc.workerID, pc.logger)
 	}
 
-	// Set up restart callback if restart is enabled
+	// Set up restart callback with context awareness
 	if pc.restartCircuitBreaker != nil {
 		healthMonitor.SetRestartCallback(func(reason string) error {
-			pc.logger.Warnf("Restart requested, worker: %s, reason: %s", pc.workerID, reason)
-			// Already async context in health monitor callback - no goroutine
+			// ✅ NEW: Evaluate restart policy before proceeding (moved from health monitor)
+			healthState := healthMonitor.State()
+			shouldRestart := shouldRestartBasedOnPolicy(pc.config.RestartPolicy, healthState.Status)
+			if !shouldRestart {
+				pc.logger.Debugf("Health restart skipped due to policy, worker: %s, policy: %s, status: %s, reason: %s",
+					pc.workerID, pc.config.RestartPolicy, healthState.Status, reason)
+				return nil
+			}
+
+			pc.logger.Warnf("Health restart requested, worker: %s, policy: %s, status: %s, reason: %s",
+				pc.workerID, pc.config.RestartPolicy, healthState.Status, reason)
+
+			// Create context for health failure restart
+			restartContext := processcontrol.RestartContext{
+				TriggerType:       processcontrol.RestartTriggerHealthFailure,
+				Severity:          "critical",           // Health failures are always critical
+				WorkerProfileType: pc.workerProfileType, // ✅ RENAMED field
+				ViolationType:     "health",
+				Message:           reason,
+			}
+
 			wrappedRestart := func() error {
 				// Use a background context for restart since this is triggered by health failure
 				ctx := context.Background()
 				return pc.restartInternal(ctx, true) // health check failed -> true
 			}
-			return pc.restartCircuitBreaker.ExecuteRestart(wrappedRestart)
+			// Use the unified ExecuteRestart method
+			return pc.restartCircuitBreaker.ExecuteRestart(wrappedRestart, restartContext)
 		})
 
 		// Set up recovery callback to reset circuit breaker when process becomes healthy
@@ -345,9 +411,9 @@ func (pc *processControl) startResourceMonitoring(ctx context.Context, pid int) 
 	return resourceManager, nil
 }
 
-// Handle resource violations by integrating with existing restart logic (internal)
+// Handle resource violations with context awareness
 func (pc *processControl) handleResourceViolation(policy resourcelimits.ResourcePolicy, violation *resourcelimits.ResourceViolation) {
-	pc.logger.Warnf("Critical resource violation detected for worker %s: %s", pc.workerID, violation.Message)
+	pc.logger.Warnf("Resource violation detected for worker %s: %s", pc.workerID, violation.Message)
 
 	switch policy {
 	case resourcelimits.ResourcePolicyLog:
@@ -359,14 +425,23 @@ func (pc *processControl) handleResourceViolation(policy resourcelimits.Resource
 
 	case resourcelimits.ResourcePolicyRestart:
 		pc.logger.Errorf("RESTART: Resource limit exceeded, restarting process (policy: restart): %s", violation.Message)
-		// handleResourceViolation callback always runs in goroutine, use circuit breaker for consistency
+		// Use context-aware circuit breaker for resource violations
 		if pc.restartCircuitBreaker != nil {
-			// Use circuit breaker for consistent restart logic and protection against loops
+			// Create context for resource violation restart
+			restartContext := processcontrol.RestartContext{
+				TriggerType:       processcontrol.RestartTriggerResourceViolation,
+				Severity:          string(violation.Severity),  // warning/critical/emergency
+				WorkerProfileType: pc.workerProfileType,        // ✅ RENAMED field
+				ViolationType:     string(violation.LimitType), // memory/cpu/process
+				Message:           violation.Message,
+			}
+
 			wrappedRestart := func() error {
 				ctx := context.Background()
 				return pc.restartInternal(ctx, false) // normally, running process -> false
 			}
-			if err := pc.restartCircuitBreaker.ExecuteRestart(wrappedRestart); err != nil {
+			// Use the unified ExecuteRestart method
+			if err := pc.restartCircuitBreaker.ExecuteRestart(wrappedRestart, restartContext); err != nil {
 				pc.logger.Errorf("Failed to restart process after resource violation (circuit breaker): %v", err)
 			}
 		} else {
@@ -430,26 +505,26 @@ func (pc *processControl) stopInternal(ctx context.Context, idDeadPID bool) erro
 }
 
 // canStopFromState validates if stopping is allowed from the current state
-func (pc *processControl) canStopFromState(currentState ProcessState) bool {
+func (pc *processControl) canStopFromState(currentState processcontrol.ProcessState) bool {
 	switch currentState {
-	case ProcessStateIdle:
+	case processcontrol.ProcessStateIdle:
 		return true // ✅ Can stop from idle (no-op)
-	case ProcessStateStarting:
+	case processcontrol.ProcessStateStarting:
 		return false // ❌ Wait for startup to complete
-	case ProcessStateRunning:
+	case processcontrol.ProcessStateRunning:
 		return true // ✅ Can stop from running
-	case ProcessStateStopping:
+	case processcontrol.ProcessStateStopping:
 		return false // ❌ Already stopping
-	case ProcessStateTerminating:
+	case processcontrol.ProcessStateTerminating:
 		return false // ❌ Already terminating
 	default:
 		return false // ❌ Unknown state
 	}
 }
 
-// restartInternal performs the actual restart without additional validation
+// restartInternal performs the actual restart (simplified)
 func (pc *processControl) restartInternal(ctx context.Context, idDeadPID bool) error {
-	pc.logger.Infof("Restarting process control...")
+	pc.logger.Infof("Restarting process control, worker: %s", pc.workerID)
 
 	// 1. Stop the current process (with state validation)
 	if err := pc.stopInternal(ctx, idDeadPID); err != nil {
@@ -458,7 +533,7 @@ func (pc *processControl) restartInternal(ctx context.Context, idDeadPID bool) e
 	}
 
 	// 2. Start the process again (with state validation)
-	// Note: stopInternal() sets state to ProcessStateIdle, so startInternal() will succeed
+	// Note: stopInternal() sets state to processcontrol.ProcessStateIdle, so startInternal() will succeed
 	if err := pc.startInternal(ctx); err != nil {
 		pc.logger.Errorf("Failed to start process during restart: %v", err)
 		return fmt.Errorf("failed to start process during restart: %v", err)
@@ -609,7 +684,7 @@ func (pc *processControl) cleanupResourcesUnderLock() {
 type terminationPlan struct {
 	processToTerminate *os.Process
 	processDoneSignal  chan error
-	targetState        ProcessState
+	targetState        processcontrol.ProcessState
 	skipGraceful       bool
 	shouldProceed      bool
 	errorToReturn      error
@@ -623,7 +698,7 @@ func (pc *processControl) validateAndPlanTermination(policy resourcelimits.Resou
 	plan := &terminationPlan{}
 
 	// Fast-path: already stopped
-	if pc.state == ProcessStateIdle {
+	if pc.state == processcontrol.ProcessStateIdle {
 		pc.logger.Infof("Process already stopped, worker: %s", pc.workerID)
 		plan.shouldProceed = false
 		return plan
@@ -632,14 +707,14 @@ func (pc *processControl) validateAndPlanTermination(policy resourcelimits.Resou
 	// Determine target state and behavior based on policy
 	switch policy {
 	case resourcelimits.ResourcePolicyGracefulShutdown:
-		plan.targetState = ProcessStateStopping
+		plan.targetState = processcontrol.ProcessStateStopping
 		plan.skipGraceful = false
 	case resourcelimits.ResourcePolicyImmediateKill:
-		plan.targetState = ProcessStateTerminating
+		plan.targetState = processcontrol.ProcessStateTerminating
 		plan.skipGraceful = true
 	default:
 		// For unknown policies, default to graceful
-		plan.targetState = ProcessStateStopping
+		plan.targetState = processcontrol.ProcessStateStopping
 		plan.skipGraceful = false
 	}
 
@@ -674,7 +749,7 @@ func (pc *processControl) finalizeTermination(plan *terminationPlan) {
 		pc.cleanupResourcesUnderLock()
 	}
 
-	pc.state = ProcessStateIdle
+	pc.state = processcontrol.ProcessStateIdle
 	pc.logger.Debugf("State transition: %s -> idle, worker: %s", plan.targetState, pc.workerID)
 }
 
@@ -703,14 +778,14 @@ func (pc *processControl) validateAndPlanStop() *stopPlan {
 	}
 
 	// Fast-path: already stopped
-	if pc.state == ProcessStateIdle {
+	if pc.state == processcontrol.ProcessStateIdle {
 		pc.logger.Infof("Process already stopped, worker: %s", pc.workerID)
 		plan.shouldProceed = false
 		return plan
 	}
 
 	// Set stopping state immediately to block new operations
-	pc.state = ProcessStateStopping
+	pc.state = processcontrol.ProcessStateStopping
 	pc.logger.Debugf("State transition: -> stopping, worker: %s", pc.workerID)
 
 	// Get process reference for termination
@@ -733,8 +808,15 @@ func (pc *processControl) finalizeStop() {
 	// Use shared cleanup logic
 	pc.cleanupResourcesUnderLock()
 
-	pc.state = ProcessStateIdle
+	pc.state = processcontrol.ProcessStateIdle
 	pc.logger.Debugf("State transition: stopping -> idle, worker: %s", pc.workerID)
+}
+
+// safeGetState gets current state with defer-only read lock (replaces the existing GetState)
+func (pc *processControl) safeGetState() processcontrol.ProcessState {
+	pc.mutex.RLock()
+	defer pc.mutex.RUnlock() // ✅ AUTOMATIC unlock - no fragility!
+	return pc.state
 }
 
 // safeGetProcess safely gets process reference with defer-only read lock
@@ -742,13 +824,6 @@ func (pc *processControl) safeGetProcess() *os.Process {
 	pc.mutex.RLock()
 	defer pc.mutex.RUnlock() // ✅ AUTOMATIC unlock - no fragility!
 	return pc.process
-}
-
-// safeGetState gets current state with defer-only read lock (replaces the existing GetState)
-func (pc *processControl) safeGetState() ProcessState {
-	pc.mutex.RLock()
-	defer pc.mutex.RUnlock() // ✅ AUTOMATIC unlock - no fragility!
-	return pc.state
 }
 
 // ===== LOG COLLECTION INTEGRATION =====

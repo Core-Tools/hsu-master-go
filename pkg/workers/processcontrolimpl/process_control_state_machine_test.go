@@ -22,24 +22,24 @@ import (
 func TestProcessState_AllTransitions(t *testing.T) {
 	tests := []struct {
 		name           string
-		currentState   ProcessState
+		currentState   processcontrol.ProcessState
 		operation      string
 		expectedResult bool
 		description    string
 	}{
 		// Start operation tests - comprehensive coverage
-		{"start_from_idle", ProcessStateIdle, "start", true, "Normal startup path"},
-		{"start_from_starting", ProcessStateStarting, "start", false, "Already starting - prevent double start"},
-		{"start_from_running", ProcessStateRunning, "start", false, "Already running - prevent restart via start"},
-		{"start_from_stopping", ProcessStateStopping, "start", false, "Still stopping - wait for completion"},
-		{"start_from_terminating", ProcessStateTerminating, "start", false, "Still terminating - wait for completion"},
+		{"start_from_idle", processcontrol.ProcessStateIdle, "start", true, "Normal startup path"},
+		{"start_from_starting", processcontrol.ProcessStateStarting, "start", false, "Already starting - prevent double start"},
+		{"start_from_running", processcontrol.ProcessStateRunning, "start", false, "Already running - prevent restart via start"},
+		{"start_from_stopping", processcontrol.ProcessStateStopping, "start", false, "Still stopping - wait for completion"},
+		{"start_from_terminating", processcontrol.ProcessStateTerminating, "start", false, "Still terminating - wait for completion"},
 
 		// Stop operation tests - comprehensive coverage
-		{"stop_from_idle", ProcessStateIdle, "stop", true, "Stop from idle is no-op but allowed"},
-		{"stop_from_starting", ProcessStateStarting, "stop", false, "Cannot stop during startup"},
-		{"stop_from_running", ProcessStateRunning, "stop", true, "Normal stop path"},
-		{"stop_from_stopping", ProcessStateStopping, "stop", false, "Already stopping - prevent double stop"},
-		{"stop_from_terminating", ProcessStateTerminating, "stop", false, "Already terminating - let it complete"},
+		{"stop_from_idle", processcontrol.ProcessStateIdle, "stop", true, "Stop from idle is no-op but allowed"},
+		{"stop_from_starting", processcontrol.ProcessStateStarting, "stop", false, "Cannot stop during startup"},
+		{"stop_from_running", processcontrol.ProcessStateRunning, "stop", true, "Normal stop path"},
+		{"stop_from_stopping", processcontrol.ProcessStateStopping, "stop", false, "Already stopping - prevent double stop"},
+		{"stop_from_terminating", processcontrol.ProcessStateTerminating, "stop", false, "Already terminating - let it complete"},
 	}
 
 	for _, tt := range tests {
@@ -71,50 +71,50 @@ func TestProcessState_AllTransitions(t *testing.T) {
 func TestProcessControl_Start_StateTransitions(t *testing.T) {
 	tests := []struct {
 		name         string
-		initialState ProcessState
+		initialState processcontrol.ProcessState
 		setupMocks   func(*processControl)
 		expectError  bool
-		finalState   ProcessState
+		finalState   processcontrol.ProcessState
 		description  string
 	}{
 		{
 			name:         "successful_start_from_idle",
-			initialState: ProcessStateIdle,
+			initialState: processcontrol.ProcessStateIdle,
 			setupMocks: func(impl *processControl) {
 				impl.config.ExecuteCmd = func(ctx context.Context) (*os.Process, io.ReadCloser, *monitoring.HealthCheckConfig, error) {
 					return &os.Process{Pid: 12345}, &MockReadCloser{}, nil, nil
 				}
 			},
 			expectError: false,
-			finalState:  ProcessStateRunning,
+			finalState:  processcontrol.ProcessStateRunning,
 			description: "Normal startup should transition Idle -> Starting -> Running",
 		},
 		{
 			name:         "start_from_running_blocked",
-			initialState: ProcessStateRunning,
+			initialState: processcontrol.ProcessStateRunning,
 			setupMocks:   func(impl *processControl) {},
 			expectError:  true,
-			finalState:   ProcessStateRunning,
+			finalState:   processcontrol.ProcessStateRunning,
 			description:  "Start from Running should be blocked by state validation",
 		},
 		{
 			name:         "start_from_starting_blocked",
-			initialState: ProcessStateStarting,
+			initialState: processcontrol.ProcessStateStarting,
 			setupMocks:   func(impl *processControl) {},
 			expectError:  true,
-			finalState:   ProcessStateStarting,
+			finalState:   processcontrol.ProcessStateStarting,
 			description:  "Start from Starting should be blocked by state validation",
 		},
 		{
 			name:         "start_failure_resets_to_idle",
-			initialState: ProcessStateIdle,
+			initialState: processcontrol.ProcessStateIdle,
 			setupMocks: func(impl *processControl) {
 				impl.config.ExecuteCmd = func(ctx context.Context) (*os.Process, io.ReadCloser, *monitoring.HealthCheckConfig, error) {
 					return nil, nil, nil, errors.New("execution failed")
 				}
 			},
 			expectError: true,
-			finalState:  ProcessStateIdle,
+			finalState:  processcontrol.ProcessStateIdle,
 			description: "Failed start should reset state to Idle",
 		},
 	}
@@ -151,50 +151,50 @@ func TestProcessControl_Start_StateTransitions(t *testing.T) {
 func TestProcessControl_Stop_StateTransitions(t *testing.T) {
 	tests := []struct {
 		name         string
-		initialState ProcessState
+		initialState processcontrol.ProcessState
 		hasProcess   bool
 		expectError  bool
-		finalState   ProcessState
+		finalState   processcontrol.ProcessState
 		description  string
 	}{
 		{
 			name:         "successful_stop_from_running",
-			initialState: ProcessStateRunning,
+			initialState: processcontrol.ProcessStateRunning,
 			hasProcess:   true,
 			expectError:  false,
-			finalState:   ProcessStateIdle,
+			finalState:   processcontrol.ProcessStateIdle,
 			description:  "Normal stop should transition Running -> Stopping -> Idle",
 		},
 		{
 			name:         "stop_from_idle_noop",
-			initialState: ProcessStateIdle,
+			initialState: processcontrol.ProcessStateIdle,
 			hasProcess:   false,
 			expectError:  false,
-			finalState:   ProcessStateIdle,
+			finalState:   processcontrol.ProcessStateIdle,
 			description:  "Stop from Idle should be no-op but successful",
 		},
 		{
 			name:         "stop_from_starting_blocked",
-			initialState: ProcessStateStarting,
+			initialState: processcontrol.ProcessStateStarting,
 			hasProcess:   true,
 			expectError:  true,
-			finalState:   ProcessStateStarting,
+			finalState:   processcontrol.ProcessStateStarting,
 			description:  "Stop from Starting should be blocked",
 		},
 		{
 			name:         "stop_from_stopping_blocked",
-			initialState: ProcessStateStopping,
+			initialState: processcontrol.ProcessStateStopping,
 			hasProcess:   true,
 			expectError:  true,
-			finalState:   ProcessStateStopping,
+			finalState:   processcontrol.ProcessStateStopping,
 			description:  "Stop from Stopping should be blocked",
 		},
 		{
 			name:         "stop_from_terminating_blocked",
-			initialState: ProcessStateTerminating,
+			initialState: processcontrol.ProcessStateTerminating,
 			hasProcess:   true,
 			expectError:  true,
-			finalState:   ProcessStateTerminating,
+			finalState:   processcontrol.ProcessStateTerminating,
 			description:  "Stop from Terminating should be blocked",
 		},
 	}
@@ -216,32 +216,32 @@ func TestProcessControl_Stop_StateTransitions(t *testing.T) {
 			}
 
 			// For tests that should succeed, use the defer-only helpers directly to avoid real process operations
-			if !tt.expectError && tt.initialState == ProcessStateRunning {
+			if !tt.expectError && tt.initialState == processcontrol.ProcessStateRunning {
 				// Test the defer-only locking pattern directly
 				plan := impl.validateAndPlanStop()
 				require.True(t, plan.shouldProceed)
 				assert.NotNil(t, plan.processToTerminate)
-				assert.Equal(t, ProcessStateStopping, impl.state)
+				assert.Equal(t, processcontrol.ProcessStateStopping, impl.state)
 
 				// Simulate successful termination by calling finalize
 				impl.finalizeStop()
-				assert.Equal(t, ProcessStateIdle, impl.state)
+				assert.Equal(t, processcontrol.ProcessStateIdle, impl.state)
 				return
 			}
 
 			// For no-op case (stop from idle)
-			if !tt.expectError && tt.initialState == ProcessStateIdle {
+			if !tt.expectError && tt.initialState == processcontrol.ProcessStateIdle {
 				plan := impl.validateAndPlanStop()
 				assert.False(t, plan.shouldProceed)
 				assert.Nil(t, plan.errorToReturn)
-				assert.Equal(t, ProcessStateIdle, impl.state)
+				assert.Equal(t, processcontrol.ProcessStateIdle, impl.state)
 				return
 			}
 
 			// For error cases, test validation directly
 			if tt.expectError {
 				plan := impl.validateAndPlanStop()
-				if tt.initialState != ProcessStateIdle {
+				if tt.initialState != processcontrol.ProcessStateIdle {
 					assert.False(t, plan.shouldProceed)
 					assert.NotNil(t, plan.errorToReturn)
 				}
@@ -268,16 +268,16 @@ func TestProcessControl_Stop_StateTransitions(t *testing.T) {
 func TestProcessControl_Restart_StateTransitions(t *testing.T) {
 	tests := []struct {
 		name         string
-		initialState ProcessState
+		initialState processcontrol.ProcessState
 		hasProcess   bool
 		setupMocks   func(*processControl)
 		expectError  bool
-		finalState   ProcessState
+		finalState   processcontrol.ProcessState
 		description  string
 	}{
 		{
 			name:         "successful_restart_from_running",
-			initialState: ProcessStateRunning,
+			initialState: processcontrol.ProcessStateRunning,
 			hasProcess:   true,
 			setupMocks: func(impl *processControl) {
 				impl.config.ExecuteCmd = func(ctx context.Context) (*os.Process, io.ReadCloser, *monitoring.HealthCheckConfig, error) {
@@ -285,25 +285,25 @@ func TestProcessControl_Restart_StateTransitions(t *testing.T) {
 				}
 			},
 			expectError: false,
-			finalState:  ProcessStateRunning,
+			finalState:  processcontrol.ProcessStateRunning,
 			description: "Restart should go Running -> Stopping -> Idle -> Starting -> Running",
 		},
 		{
 			name:         "restart_from_idle_blocked",
-			initialState: ProcessStateIdle,
+			initialState: processcontrol.ProcessStateIdle,
 			hasProcess:   false,
 			setupMocks:   func(impl *processControl) {},
 			expectError:  true,
-			finalState:   ProcessStateIdle,
+			finalState:   processcontrol.ProcessStateIdle,
 			description:  "Restart from Idle should fail (no process to restart)",
 		},
 		{
 			name:         "restart_without_process_blocked",
-			initialState: ProcessStateRunning,
+			initialState: processcontrol.ProcessStateRunning,
 			hasProcess:   false,
 			setupMocks:   func(impl *processControl) {},
 			expectError:  true,
-			finalState:   ProcessStateRunning,
+			finalState:   processcontrol.ProcessStateRunning,
 			description:  "Restart without process should fail",
 		},
 	}
@@ -327,29 +327,29 @@ func TestProcessControl_Restart_StateTransitions(t *testing.T) {
 			tt.setupMocks(impl)
 
 			// For successful restart, test the state machine logic directly
-			if !tt.expectError && tt.initialState == ProcessStateRunning && tt.hasProcess {
+			if !tt.expectError && tt.initialState == processcontrol.ProcessStateRunning && tt.hasProcess {
 				// Test stop phase
 				stopPlan := impl.validateAndPlanStop()
 				require.True(t, stopPlan.shouldProceed)
-				assert.Equal(t, ProcessStateStopping, impl.state)
+				assert.Equal(t, processcontrol.ProcessStateStopping, impl.state)
 
 				// Simulate successful stop
 				impl.finalizeStop()
-				assert.Equal(t, ProcessStateIdle, impl.state)
+				assert.Equal(t, processcontrol.ProcessStateIdle, impl.state)
 
 				// Test start phase
-				assert.True(t, impl.canStartFromState(ProcessStateIdle))
-				impl.state = ProcessStateStarting
+				assert.True(t, impl.canStartFromState(processcontrol.ProcessStateIdle))
+				impl.state = processcontrol.ProcessStateStarting
 				impl.process = &os.Process{Pid: 54321}
-				impl.state = ProcessStateRunning
+				impl.state = processcontrol.ProcessStateRunning
 
-				assert.Equal(t, ProcessStateRunning, impl.state)
+				assert.Equal(t, processcontrol.ProcessStateRunning, impl.state)
 				return
 			}
 
 			// For error cases that we can test safely
 			if tt.expectError {
-				if tt.initialState == ProcessStateIdle {
+				if tt.initialState == processcontrol.ProcessStateIdle {
 					// Restart from idle should fail because no process
 					assert.Nil(t, impl.process)
 					return
@@ -383,26 +383,26 @@ func TestProcessControl_StateTransitionConsistency(t *testing.T) {
 	// Test state transition logic using defer-only helpers
 	t.Run("defer_only_lifecycle_consistency", func(t *testing.T) {
 		// Start: Idle -> Running (test state validation)
-		assert.Equal(t, ProcessStateIdle, impl.GetState())
-		assert.True(t, impl.canStartFromState(ProcessStateIdle))
+		assert.Equal(t, processcontrol.ProcessStateIdle, impl.GetState())
+		assert.True(t, impl.canStartFromState(processcontrol.ProcessStateIdle))
 
 		// Simulate start
-		impl.state = ProcessStateStarting
+		impl.state = processcontrol.ProcessStateStarting
 		impl.process = &os.Process{Pid: 12345}
-		impl.state = ProcessStateRunning
-		assert.Equal(t, ProcessStateRunning, impl.GetState())
+		impl.state = processcontrol.ProcessStateRunning
+		assert.Equal(t, processcontrol.ProcessStateRunning, impl.GetState())
 
 		// Stop: Running -> Idle (test defer-only pattern)
 		plan := impl.validateAndPlanStop()
 		require.True(t, plan.shouldProceed)
-		assert.Equal(t, ProcessStateStopping, impl.state)
+		assert.Equal(t, processcontrol.ProcessStateStopping, impl.state)
 
 		impl.finalizeStop()
-		assert.Equal(t, ProcessStateIdle, impl.GetState())
+		assert.Equal(t, processcontrol.ProcessStateIdle, impl.GetState())
 	})
 
 	// Reset for next test
-	impl.state = ProcessStateIdle
+	impl.state = processcontrol.ProcessStateIdle
 	impl.process = nil
 
 	// Test: Multiple operations on same state
@@ -412,18 +412,18 @@ func TestProcessControl_StateTransitionConsistency(t *testing.T) {
 			plan := impl.validateAndPlanStop()
 			assert.False(t, plan.shouldProceed) // No process to stop
 			assert.Nil(t, plan.errorToReturn)   // But no error
-			assert.Equal(t, ProcessStateIdle, impl.state)
+			assert.Equal(t, processcontrol.ProcessStateIdle, impl.state)
 		}
 
 		// Simulate start
-		impl.state = ProcessStateRunning
+		impl.state = processcontrol.ProcessStateRunning
 		impl.process = &os.Process{Pid: 12345}
 
 		// Multiple starts on running should fail consistently
 		for i := 0; i < 3; i++ {
-			canStart := impl.canStartFromState(ProcessStateRunning)
+			canStart := impl.canStartFromState(processcontrol.ProcessStateRunning)
 			assert.False(t, canStart)
-			assert.Equal(t, ProcessStateRunning, impl.state)
+			assert.Equal(t, processcontrol.ProcessStateRunning, impl.state)
 		}
 	})
 }
@@ -438,21 +438,21 @@ func TestProcessControl_StateValidation_EdgeCases(t *testing.T) {
 	impl := pc.(*processControl)
 
 	// Test all possible state values for completeness
-	allStates := []ProcessState{
-		ProcessStateIdle,
-		ProcessStateStarting,
-		ProcessStateRunning,
-		ProcessStateStopping,
-		ProcessStateTerminating,
+	allStates := []processcontrol.ProcessState{
+		processcontrol.ProcessStateIdle,
+		processcontrol.ProcessStateStarting,
+		processcontrol.ProcessStateRunning,
+		processcontrol.ProcessStateStopping,
+		processcontrol.ProcessStateTerminating,
 	}
 
 	t.Run("start_validation_comprehensive", func(t *testing.T) {
-		expectedResults := map[ProcessState]bool{
-			ProcessStateIdle:        true,  // Can start from idle
-			ProcessStateStarting:    false, // Cannot start while starting
-			ProcessStateRunning:     false, // Cannot start while running
-			ProcessStateStopping:    false, // Cannot start while stopping
-			ProcessStateTerminating: false, // Cannot start while terminating
+		expectedResults := map[processcontrol.ProcessState]bool{
+			processcontrol.ProcessStateIdle:        true,  // Can start from idle
+			processcontrol.ProcessStateStarting:    false, // Cannot start while starting
+			processcontrol.ProcessStateRunning:     false, // Cannot start while running
+			processcontrol.ProcessStateStopping:    false, // Cannot start while stopping
+			processcontrol.ProcessStateTerminating: false, // Cannot start while terminating
 		}
 
 		for _, state := range allStates {
@@ -464,12 +464,12 @@ func TestProcessControl_StateValidation_EdgeCases(t *testing.T) {
 	})
 
 	t.Run("stop_validation_comprehensive", func(t *testing.T) {
-		expectedResults := map[ProcessState]bool{
-			ProcessStateIdle:        true,  // Can stop from idle (no-op)
-			ProcessStateStarting:    false, // Cannot stop while starting
-			ProcessStateRunning:     true,  // Can stop from running
-			ProcessStateStopping:    false, // Cannot stop while stopping
-			ProcessStateTerminating: false, // Cannot stop while terminating
+		expectedResults := map[processcontrol.ProcessState]bool{
+			processcontrol.ProcessStateIdle:        true,  // Can stop from idle (no-op)
+			processcontrol.ProcessStateStarting:    false, // Cannot stop while starting
+			processcontrol.ProcessStateRunning:     true,  // Can stop from running
+			processcontrol.ProcessStateStopping:    false, // Cannot stop while stopping
+			processcontrol.ProcessStateTerminating: false, // Cannot stop while terminating
 		}
 
 		for _, state := range allStates {
@@ -492,7 +492,7 @@ func TestProcessControl_InvalidStateHandling(t *testing.T) {
 
 	// Test with invalid/unknown state
 	t.Run("unknown_state_handling", func(t *testing.T) {
-		invalidState := ProcessState("unknown")
+		invalidState := processcontrol.ProcessState("unknown")
 		impl.state = invalidState
 
 		// Should reject operations on unknown states
@@ -502,7 +502,7 @@ func TestProcessControl_InvalidStateHandling(t *testing.T) {
 
 	// Test state consistency after operations
 	t.Run("state_consistency_after_errors", func(t *testing.T) {
-		impl.state = ProcessStateRunning
+		impl.state = processcontrol.ProcessStateRunning
 		ctx := context.Background()
 
 		// Try to start from running (should fail)
@@ -510,7 +510,7 @@ func TestProcessControl_InvalidStateHandling(t *testing.T) {
 		assert.Error(t, err)
 
 		// State should remain unchanged
-		assert.Equal(t, ProcessStateRunning, impl.GetState())
+		assert.Equal(t, processcontrol.ProcessStateRunning, impl.GetState())
 
 		// Try to stop without process (should fail validation)
 		impl.process = nil
@@ -518,6 +518,6 @@ func TestProcessControl_InvalidStateHandling(t *testing.T) {
 		assert.Error(t, err)
 
 		// State should remain unchanged
-		assert.Equal(t, ProcessStateRunning, impl.GetState())
+		assert.Equal(t, processcontrol.ProcessStateRunning, impl.GetState())
 	})
 }

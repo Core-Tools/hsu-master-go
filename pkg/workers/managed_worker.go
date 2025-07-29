@@ -44,15 +44,16 @@ func (w *managedWorker) Metadata() UnitMetadata {
 
 func (w *managedWorker) ProcessControlOptions() processcontrol.ProcessControlOptions {
 	return processcontrol.ProcessControlOptions{
-		CanAttach:       true, // Can attach to existing processes as fallback
-		CanTerminate:    true, // Can terminate processes
-		CanRestart:      true, // Can restart processes
-		ExecuteCmd:      w.ExecuteCmd,
-		AttachCmd:       w.AttachCmd,
-		Restart:         &w.processControlConfig.Restart,
-		Limits:          &w.processControlConfig.Limits,
-		GracefulTimeout: w.processControlConfig.GracefulTimeout,
-		HealthCheck:     nil, // Provided by ExecuteCmd or AttachCmd
+		CanAttach:           true, // Can attach to existing processes as fallback
+		CanTerminate:        true, // Can terminate processes
+		CanRestart:          true, // Can restart processes
+		ExecuteCmd:          w.ExecuteCmd,
+		AttachCmd:           w.AttachCmd,
+		ContextAwareRestart: &w.processControlConfig.ContextAwareRestart, // ✅ NEW: Full context-aware restart config
+		RestartPolicy:       w.processControlConfig.RestartPolicy,        // ✅ NEW: Policy for health monitor
+		Limits:              &w.processControlConfig.Limits,
+		GracefulTimeout:     w.processControlConfig.GracefulTimeout,
+		HealthCheck:         nil, // Provided by ExecuteCmd or AttachCmd
 	}
 }
 

@@ -1,6 +1,8 @@
 package workers
 
 import (
+	"fmt"
+
 	"github.com/core-tools/hsu-master/pkg/errors"
 	"github.com/core-tools/hsu-master/pkg/monitoring"
 	"github.com/core-tools/hsu-master/pkg/process"
@@ -23,8 +25,9 @@ func ValidateManagedUnit(config ManagedUnit) error {
 		return err
 	}
 
-	if err := monitoring.ValidateRestartConfig(config.Control.Restart); err != nil {
-		return err
+	// Validate context-aware restart configuration
+	if err := processcontrol.ValidateContextAwareRestartConfig(config.Control.ContextAwareRestart); err != nil {
+		return fmt.Errorf("invalid context-aware restart configuration: %w", err)
 	}
 
 	if config.HealthCheck.Type != "" {
@@ -73,8 +76,9 @@ func ValidateIntegratedUnit(config IntegratedUnit) error {
 		return err
 	}
 
-	if err := monitoring.ValidateRestartConfig(config.Control.Restart); err != nil {
-		return err
+	// Validate context-aware restart configuration
+	if err := processcontrol.ValidateContextAwareRestartConfig(config.Control.ContextAwareRestart); err != nil {
+		return fmt.Errorf("invalid context-aware restart configuration: %w", err)
 	}
 
 	return nil
@@ -87,12 +91,7 @@ func ValidateProcessControlOptions(options processcontrol.ProcessControlOptions)
 		return errors.NewValidationError("graceful timeout cannot be negative", nil)
 	}
 
-	// Validate restart config if provided
-	if options.Restart != nil {
-		if err := monitoring.ValidateRestartConfig(*options.Restart); err != nil {
-			return errors.NewValidationError("invalid restart configuration", err)
-		}
-	}
+	// ✅ REMOVED: Restart validation - field replaced with ContextAwareRestart and RestartPolicy
 
 	// Resource limits validation is now handled in the resourcelimits package
 

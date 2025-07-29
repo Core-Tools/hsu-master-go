@@ -44,16 +44,17 @@ func (w *unmanagedWorker) ProcessControlOptions() processcontrol.ProcessControlO
 		w.id, w.discoveryConfig.Method, w.processControlConfig.CanTerminate, w.processControlConfig.CanRestart)
 
 	return processcontrol.ProcessControlOptions{
-		CanAttach:       true,                                   // Must attach to existing processes
-		CanTerminate:    w.processControlConfig.CanTerminate,    // Based on system control config
-		CanRestart:      w.processControlConfig.CanRestart,      // Based on system control config
-		ExecuteCmd:      nil,                                    // Cannot execute new processes
-		AttachCmd:       w.AttachCmd,                            // Use unit's health check config with logging
-		Restart:         nil,                                    // No restart configuration for unmanaged
-		Limits:          nil,                                    // No resource limits for unmanaged
-		GracefulTimeout: w.processControlConfig.GracefulTimeout, // Use configured graceful timeout
-		HealthCheck:     nil,                                    // Provided by AttachCmd
-		AllowedSignals:  w.processControlConfig.AllowedSignals,  // Use configured signal permissions
+		CanAttach:           true,                                   // Must attach to existing processes
+		CanTerminate:        w.processControlConfig.CanTerminate,    // Based on system control config
+		CanRestart:          w.processControlConfig.CanRestart,      // Based on system control config
+		ExecuteCmd:          nil,                                    // Cannot execute new processes
+		AttachCmd:           w.AttachCmd,                            // Use unit's health check config with logging
+		ContextAwareRestart: nil,                                    // No context-aware restart configuration for unmanaged
+		RestartPolicy:       processcontrol.RestartNever,            // Unmanaged processes should not auto-restart
+		Limits:              nil,                                    // No resource limits for unmanaged
+		GracefulTimeout:     w.processControlConfig.GracefulTimeout, // Use configured graceful timeout
+		HealthCheck:         nil,                                    // Provided by AttachCmd
+		AllowedSignals:      w.processControlConfig.AllowedSignals,  // Use configured signal permissions
 	}
 }
 

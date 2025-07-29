@@ -4,6 +4,7 @@ master:
 workers:
   - id: "test-managed-1"
     type: "managed"
+    profile_type: "web"
     unit:
       managed:
         metadata:
@@ -12,11 +13,12 @@ workers:
           execution:
             executable_path: "..\\..\\..\\..\\hsu-example1-go\\cmd\\srv\\echogrpcsrv\\echogrpcsrv.exe"
             args: ["--port", "50051"]
-          restart:
-            policy: "on-failure"
-            max_retries: 3
-            retry_delay: "5s"
-            backoff_rate: 1.5
+          restart_policy: "on-failure"
+          context_aware_restart:
+            default:
+              max_retries: 3
+              retry_delay: "5s"
+              backoff_rate: 1.5
         health_check:
           type: "process"
           run_options:
@@ -27,6 +29,7 @@ workers:
             retries: 2
   - id: "test-managed-2"
     type: "managed"
+    profile_type: "web"
     unit:
       managed:
         metadata:
@@ -35,11 +38,12 @@ workers:
           execution:
             executable_path: "..\\..\\..\\..\\hsu-example1-go\\cmd\\srv\\echogrpcsrv\\echogrpcsrv.exe"
             args: ["--port", "50052"]
-          restart:
-            policy: "on-failure"
-            max_retries: 3
-            retry_delay: "5s"
-            backoff_rate: 1.5
+          restart_policy: "on-failure"
+          context_aware_restart:
+            default:
+              max_retries: 3
+              retry_delay: "5s"
+              backoff_rate: 1.5
         health_check:
           type: "process"
           run_options:
