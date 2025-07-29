@@ -24,7 +24,8 @@ func SendTerminationSignal(pid int, idDead bool, timeout time.Duration) error {
 	defer consoleOperationLock.Unlock()
 
 	if idDead {
-		idDead, _ = !processstate.IsProcessRunning(pid)
+		isRunning, _ := processstate.IsProcessRunning(pid)
+		idDead = !isRunning
 	}
 
 	dll, err := syscall.LoadDLL("kernel32.dll")

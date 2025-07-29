@@ -1,1 +1,0 @@
-mastersrv.exe --config config-integrated.yaml

@@ -1,5 +1,5 @@
+- restarts by resource violation close the circuit breaker
 - per-worker logs files
-- CheckInterval in XxxLimits is not used
 - unit tests for health check
 - unit tests for resource limits
 - unit tests for circuit breaker
