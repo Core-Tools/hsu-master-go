@@ -28,6 +28,10 @@ type ProcessFileConfig struct {
 
 	// Create subdirectory for the app (recommended for system services)
 	UseSubdirectory bool
+
+	// Service scenario - fills defaults to all fields
+	// Used when service context is not set up
+	Scenario string
 }
 
 // ServiceContext defines the context in which the service runs
@@ -52,13 +56,11 @@ type ProcessFileManager struct {
 
 // NewProcessFileManager creates a new process file manager with the given configuration
 func NewProcessFileManager(config ProcessFileConfig, logger logging.Logger) *ProcessFileManager {
-	// Set defaults
 	if config.AppName == "" {
 		config.AppName = DefaultAppName
 	}
-
 	if config.ServiceContext == "" {
-		config.ServiceContext = UserService
+		config = GetRecommendedProcessFileConfig(config.Scenario, config.AppName)
 	}
 
 	return &ProcessFileManager{
@@ -67,8 +69,8 @@ func NewProcessFileManager(config ProcessFileConfig, logger logging.Logger) *Pro
 	}
 }
 
-// GeneratePIDFilePath generates an appropriate PID file path for the given worker ID
-func (m *ProcessFileManager) GeneratePIDFilePath(workerID string) string {
+// generateFilePath generates an appropriate PID file path for the given worker ID
+func (m *ProcessFileManager) generateFilePath(workerID, ext string) string {
 	baseDir := m.getBaseDirectory()
 
 	// Create app subdirectory if requested
@@ -76,14 +78,18 @@ func (m *ProcessFileManager) GeneratePIDFilePath(workerID string) string {
 		baseDir = filepath.Join(baseDir, m.config.AppName)
 	}
 
-	return filepath.Join(baseDir, workerID+".pid")
+	return filepath.Join(baseDir, workerID+ext)
+}
+
+// GeneratePIDFilePath generates an appropriate PID file path for the given worker ID
+func (m *ProcessFileManager) GeneratePIDFilePath(workerID string) string {
+	return m.generateFilePath(workerID, ".pid")
 }
 
 // GeneratePortFilePath generates an appropriate port file path for the given worker ID
 func (m *ProcessFileManager) GeneratePortFilePath(workerID string) string {
 	// Use same base directory as PID files but with .port extension
-	pidPath := m.GeneratePIDFilePath(workerID)
-	return strings.TrimSuffix(pidPath, ".pid") + ".port"
+	return m.generateFilePath(workerID, ".port")
 }
 
 // WritePIDFile writes the process PID to the appropriate file for the given worker ID
@@ -92,7 +98,7 @@ func (m *ProcessFileManager) WritePIDFile(workerID string, pid int) error {
 	m.logger.Debugf("Writing PID file, worker: %s, pid: %d, path: %s", workerID, pid, pidFilePath)
 
 	// Validate directory exists and is writable
-	if err := ValidatePIDFileDirectory(pidFilePath); err != nil {
+	if err := ValidateDirectory(pidFilePath); err != nil {
 		m.logger.Errorf("PID file directory validation failed, worker: %s, path: %s, error: %v", workerID, pidFilePath, err)
 		return errors.NewIOError("PID file directory validation failed", err).WithContext("pid_file", pidFilePath)
 	}
@@ -114,7 +120,7 @@ func (m *ProcessFileManager) WritePortFile(workerID string, port int) error {
 	m.logger.Debugf("Writing port file, worker: %s, port: %d, path: %s", workerID, port, portPath)
 
 	// Validate directory exists and is writable
-	if err := ValidatePIDFileDirectory(portPath); err != nil {
+	if err := ValidateDirectory(portPath); err != nil {
 		m.logger.Errorf("Port file directory validation failed, worker: %s, path: %s, error: %v", workerID, portPath, err)
 		return errors.NewIOError("port file directory validation failed", err).WithContext("port_file", portPath)
 	}
@@ -163,7 +169,7 @@ func (m *ProcessFileManager) GenerateLogDirectoryPath() string {
 	// Create app subdirectory if requested
 	if m.config.UseSubdirectory {
 		// For consistency with PID files: C:\ProgramData\hsu-master\logs
-		return filepath.Join(baseDir, m.config.AppName, "logs")
+		baseDir = filepath.Join(baseDir, m.config.AppName)
 	}
 
 	// For direct log directory without app subdirectory
@@ -296,9 +302,9 @@ func (m *ProcessFileManager) getSessionServiceDirectory() string {
 	}
 }
 
-// ValidatePIDFileDirectory validates that the PID file directory exists and is writable
-func ValidatePIDFileDirectory(pidFilePath string) error {
-	dir := filepath.Dir(pidFilePath)
+// ValidateDirectory validates that directory exists and is writable
+func ValidateDirectory(path string) error {
+	dir := filepath.Dir(path)
 
 	// Check if directory exists
 	info, err := os.Stat(dir)
@@ -306,19 +312,19 @@ func ValidatePIDFileDirectory(pidFilePath string) error {
 		if os.IsNotExist(err) {
 			// Try to create the directory
 			if err := os.MkdirAll(dir, 0755); err != nil {
-				return errors.NewIOError("failed to create PID file directory", err).WithContext("directory", dir)
+				return errors.NewIOError("failed to create directory", err).WithContext("directory", dir)
 			}
 		} else {
-			return errors.NewIOError("failed to access PID file directory", err).WithContext("directory", dir)
+			return errors.NewIOError("failed to access directory", err).WithContext("directory", dir)
 		}
 	} else if !info.IsDir() {
-		return errors.NewValidationError("PID file path is not a directory", nil).WithContext("path", dir)
+		return errors.NewValidationError("Path is not a directory", nil).WithContext("path", dir)
 	}
 
 	// Check if directory is writable
 	testFile := filepath.Join(dir, ".write_test")
 	if file, err := os.Create(testFile); err != nil {
-		return errors.NewPermissionError("PID file directory is not writable", err).WithContext("directory", dir)
+		return errors.NewPermissionError("Directory is not writable", err).WithContext("directory", dir)
 	} else {
 		file.Close()
 		os.Remove(testFile)
@@ -366,7 +372,7 @@ func GetRecommendedProcessFileConfig(scenario string, appName string) ProcessFil
 	default:
 		// Default to system service
 		return ProcessFileConfig{
-			ServiceContext:  SystemService,
+			ServiceContext:  UserService,
 			AppName:         appName,
 			UseSubdirectory: true,
 		}

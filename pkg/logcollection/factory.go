@@ -3,8 +3,6 @@ package logcollection
 import (
 	"context"
 	"fmt"
-
-	"github.com/core-tools/hsu-master/pkg/logcollection/config"
 )
 
 // ===== PUBLIC FACTORY FUNCTIONS =====
@@ -48,20 +46,6 @@ func NewStructuredLoggerWithConfig(cfg LoggerConfig) (StructuredLogger, error) {
 	default:
 		return nil, fmt.Errorf("unknown backend type: %s", cfg.Backend)
 	}
-}
-
-// NewDefaultLogCollectionService creates a log collection service with default configuration
-func NewDefaultLogCollectionService() (LogCollectionService, error) {
-	// Create default logger
-	logger, err := NewStructuredLogger("zap", InfoLevel)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create default logger: %w", err)
-	}
-
-	// Create default configuration
-	cfg := config.DefaultLogCollectionConfig()
-
-	return NewLogCollectionService(cfg, logger), nil
 }
 
 // ===== CONFIGURATION TYPES FOR FACTORY =====
@@ -151,7 +135,7 @@ func CreateLoggerForMaster(masterID string, baseLogger StructuredLogger) Structu
 func CreateLoggerForComponent(component string, baseLogger StructuredLogger) StructuredLogger {
 	return baseLogger.WithFields(
 		Component(component),
-		String("subsystem", "hsu-master"),
+		String("subsystem", "master"),
 	)
 }
 

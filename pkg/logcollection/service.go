@@ -42,22 +42,21 @@ type logCollectionService struct {
 }
 
 // NewLogCollectionService creates a new log collection service
-func NewLogCollectionService(cfg config.LogCollectionConfig, logger StructuredLogger) LogCollectionService {
-	return NewLogCollectionServiceWithPathManager(cfg, logger, nil)
+func NewLogCollectionService(config config.LogCollectionConfig, logger StructuredLogger) LogCollectionService {
+	return NewLogCollectionServiceWithPathManager(config, logger, nil)
 }
 
 // NewLogCollectionServiceWithPathManager creates a new log collection service with custom path manager
-func NewLogCollectionServiceWithPathManager(cfg config.LogCollectionConfig, logger StructuredLogger, pathManager *processfile.ProcessFileManager) LogCollectionService {
+func NewLogCollectionServiceWithPathManager(config config.LogCollectionConfig, logger StructuredLogger, pathManager *processfile.ProcessFileManager) LogCollectionService {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Create default path manager if none provided
 	if pathManager == nil {
-		pathConfig := processfile.GetRecommendedProcessFileConfig("system", "hsu-master")
-		pathManager = processfile.NewProcessFileManager(pathConfig, &simpleLoggerAdapter{logger})
+		pathManager = processfile.NewProcessFileManager(processfile.ProcessFileConfig{}, &simpleLoggerAdapter{logger})
 	}
 
 	return &logCollectionService{
-		config:      cfg,
+		config:      config,
 		logger:      logger,
 		workers:     make(map[string]*workerLogCollector),
 		outputs:     make([]LogOutputWriter, 0),

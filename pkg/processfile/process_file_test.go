@@ -133,7 +133,7 @@ func TestGeneratePIDFilePath_WithoutSubdirectory(t *testing.T) {
 	assert.NotContains(t, path, "test-app")
 }
 
-func TestValidatePIDFileDirectory_Success(t *testing.T) {
+func TestValidateDirectory_Success(t *testing.T) {
 	tempDir := t.TempDir()
 	config := ProcessFileConfig{
 		BaseDirectory:   tempDir,
@@ -145,12 +145,12 @@ func TestValidatePIDFileDirectory_Success(t *testing.T) {
 	manager := NewProcessFileManager(config, &ProcessFileMockLogger{})
 	pidFile := manager.GeneratePIDFilePath("test-worker")
 
-	err := ValidatePIDFileDirectory(pidFile)
+	err := ValidateDirectory(pidFile)
 
 	assert.NoError(t, err)
 }
 
-func TestValidatePIDFileDirectory_CreateDirectory(t *testing.T) {
+func TestValidateDirectory_CreateDirectory(t *testing.T) {
 	tempDir := t.TempDir()
 	testDir := filepath.Join(tempDir, "non-existent")
 	config := ProcessFileConfig{
@@ -163,13 +163,13 @@ func TestValidatePIDFileDirectory_CreateDirectory(t *testing.T) {
 	manager := NewProcessFileManager(config, &ProcessFileMockLogger{})
 	pidFile := manager.GeneratePIDFilePath("test-worker")
 
-	err := ValidatePIDFileDirectory(pidFile)
+	err := ValidateDirectory(pidFile)
 
 	assert.NoError(t, err)
 	assert.DirExists(t, testDir)
 }
 
-func TestValidatePIDFileDirectory_InvalidPath(t *testing.T) {
+func TestValidateDirectory_InvalidPath(t *testing.T) {
 	config := ProcessFileConfig{
 		BaseDirectory:   "/root/cannot-create",
 		ServiceContext:  UserService,
@@ -180,7 +180,7 @@ func TestValidatePIDFileDirectory_InvalidPath(t *testing.T) {
 	manager := NewProcessFileManager(config, &ProcessFileMockLogger{})
 	pidFile := manager.GeneratePIDFilePath("test-worker")
 
-	err := ValidatePIDFileDirectory(pidFile)
+	err := ValidateDirectory(pidFile)
 
 	if runtime.GOOS != "windows" {
 		assert.Error(t, err)
@@ -239,10 +239,10 @@ func TestGetRecommendedProcessFileConfig(t *testing.T) {
 			expectedAppName: DefaultAppName,
 		},
 		{
-			name:            "unknown_scenario_defaults_to_system",
+			name:            "unknown_scenario_defaults_to_user",
 			scenario:        "unknown",
 			appName:         "my-app",
-			expectedContext: SystemService,
+			expectedContext: UserService,
 			expectedSubdir:  true,
 			expectedAppName: "my-app",
 		},

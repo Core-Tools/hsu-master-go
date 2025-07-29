@@ -19,20 +19,17 @@ type LogCollectionIntegration struct {
 }
 
 // NewLogCollectionIntegration creates a new log collection integration
-func NewLogCollectionIntegration(masterConfig *MasterConfig, logger logging.Logger) (*LogCollectionIntegration, error) {
+func NewLogCollectionIntegration(logConfig *config.LogCollectionConfig, logger logging.Logger) (*LogCollectionIntegration, error) {
 	integration := &LogCollectionIntegration{
 		logger:  logger,
 		enabled: false,
 	}
 
-	var logConfig *config.LogCollectionConfig
-
 	// Check if log collection is configured in config file
-	if masterConfig.LogCollection != nil && masterConfig.LogCollection.Enabled {
+	if logConfig != nil && logConfig.Enabled {
 		// Use config from file
-		logConfig = masterConfig.LogCollection
 		logger.Infof("Using log collection configuration from config file")
-	} else if masterConfig.LogCollection == nil {
+	} else if logConfig == nil {
 		// No log collection section in config - use defaults
 		defaultConfig := config.DefaultLogCollectionConfig()
 		logConfig = &defaultConfig
@@ -44,8 +41,7 @@ func NewLogCollectionIntegration(masterConfig *MasterConfig, logger logging.Logg
 	}
 
 	// Create path manager for log files
-	pathConfig := processfile.GetRecommendedProcessFileConfig("system", "hsu-master")
-	pathManager := processfile.NewProcessFileManager(pathConfig, &loggerAdapter{logger})
+	pathManager := processfile.NewProcessFileManager(processfile.ProcessFileConfig{}, &loggerAdapter{logger})
 	integration.pathManager = pathManager
 
 	// Create structured logger for log collection service

@@ -40,7 +40,7 @@ func TestCrossPlatformLogPaths(t *testing.T) {
 			fmt.Printf("\n📁 Testing %s scenario:\n", sc.name)
 
 			// Create process file manager for this scenario
-			pathConfig := processfile.GetRecommendedProcessFileConfig(sc.scenario, "hsu-master")
+			pathConfig := processfile.GetRecommendedProcessFileConfig(sc.scenario, "")
 			pathManager := processfile.NewProcessFileManager(pathConfig, &simpleLoggerAdapter{logger})
 
 			// Create log collection service with path manager

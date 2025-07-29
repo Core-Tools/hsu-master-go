@@ -61,7 +61,7 @@ func DemoCrossPlatformPaths() {
 		fmt.Printf("   " + strings.Repeat("-", 40) + "\n")
 
 		// Create process file manager for this scenario
-		pathConfig := processfile.GetRecommendedProcessFileConfig(sc.scenario, "hsu-master")
+		pathConfig := processfile.GetRecommendedProcessFileConfig(sc.scenario, "")
 		pathManager := processfile.NewProcessFileManager(pathConfig, &SimpleLogger{})
 
 		// Show log directories

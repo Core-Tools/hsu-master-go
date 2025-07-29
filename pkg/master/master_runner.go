@@ -55,7 +55,7 @@ func Run(runDuration int, configFile string, enableLogCollection bool, coreLogge
 	var logIntegration *LogCollectionIntegration
 	if enableLogCollection {
 		// Create log collection integration
-		logIntegration, err = NewLogCollectionIntegration(config, masterLogger)
+		logIntegration, err = NewLogCollectionIntegration(config.LogCollection, masterLogger)
 		if err != nil {
 			return errors.NewInternalError("failed to create log collection integration", err)
 		}
