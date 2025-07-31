@@ -19,6 +19,10 @@ import (
 func Run(runDuration int, configFile string, enableLogCollection bool, coreLogger coreLogging.Logger, masterLogger logging.Logger) error {
 	masterLogger.Infof("Master runner starting...")
 
+	// Log platform information
+	masterLogger.Infof("Platform: OS=%s, Arch=%s, CPUs=%d, Go=%s",
+		runtime.GOOS, runtime.GOARCH, runtime.NumCPU(), runtime.Version())
+
 	// Create separate contexts: one for timeout, one for components
 	componentCtx := context.Background()
 	operationCtx := componentCtx
