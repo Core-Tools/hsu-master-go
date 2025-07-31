@@ -1,32 +1,9 @@
 package processcontrol
 
 import (
-	"context"
 	"fmt"
-	"io"
-	"os"
 	"time"
-
-	"github.com/core-tools/hsu-master/pkg/logcollection"
-	config "github.com/core-tools/hsu-master/pkg/logcollection/config"
-	"github.com/core-tools/hsu-master/pkg/monitoring"
-	"github.com/core-tools/hsu-master/pkg/process"
-	"github.com/core-tools/hsu-master/pkg/processfile"
-	"github.com/core-tools/hsu-master/pkg/resourcelimits"
 )
-
-// ProcessState represents the current lifecycle state of the process control
-type ProcessState string
-
-const (
-	ProcessStateIdle        ProcessState = "idle"        // No process, ready to start
-	ProcessStateStarting    ProcessState = "starting"    // Process startup in progress
-	ProcessStateRunning     ProcessState = "running"     // Process running normally
-	ProcessStateStopping    ProcessState = "stopping"    // Graceful shutdown initiated
-	ProcessStateTerminating ProcessState = "terminating" // Force termination in progress
-)
-
-// ===== RESTART CONFIGURATION TYPES (moved from processcontrolimpl and monitoring) =====
 
 // RestartPolicy defines when a process should be restarted (moved from monitoring package)
 type RestartPolicy string
@@ -145,100 +122,4 @@ func ValidateContextAwareRestartConfig(config ContextAwareRestartConfig) error {
 	}
 
 	return nil
-}
-
-// ===== PROCESS CONTROL INTERFACE =====
-
-// ProcessControl defines the interface for controlling a process lifecycle
-type ProcessControl interface {
-	// Start starts the process
-	Start(ctx context.Context) error
-
-	// Stop stops the process gracefully
-	Stop(ctx context.Context) error
-
-	// Restart restarts the process (stop then start)
-	// force: if true, bypasses circuit breaker for immediate restart
-	// force: if false, uses circuit breaker safety mechanisms (default/recommended)
-	Restart(ctx context.Context, force bool) error
-
-	// GetState returns the current process state
-	GetState() ProcessState
-}
-
-// ===== COMMAND FUNCTION TYPES =====
-
-type AttachCmd func(ctx context.Context) (*os.Process, io.ReadCloser, *monitoring.HealthCheckConfig, error)
-
-type ExecuteCmd func(ctx context.Context) (*os.Process, io.ReadCloser, *monitoring.HealthCheckConfig, error)
-
-// ProcessControlOptions provides configuration for ProcessControl instances
-type ProcessControlOptions struct {
-	// Basic control
-	CanAttach    bool // Can attach to existing process
-	CanTerminate bool // Can send SIGTERM/SIGKILL
-	CanRestart   bool // Can restart
-
-	// Process signals
-	AllowedSignals []os.Signal // Allowed signals to send
-
-	// Graceful shutdown
-	GracefulTimeout time.Duration // Time to wait for graceful shutdown
-
-	// Process start
-	ExecuteCmd ExecuteCmd // Execute command, nil if not executable
-	AttachCmd  AttachCmd  // Attach command, nil if not attachable
-
-	// Resource management
-	Limits *resourcelimits.ResourceLimits // nil if not limitable
-
-	// Process restart configuration (Context-aware restart)
-	ContextAwareRestart *ContextAwareRestartConfig // nil if not restartable
-	RestartPolicy       RestartPolicy              // Policy for health monitor
-
-	// Worker profile type for context-aware restart decisions
-	WorkerProfileType string // "batch", "web", "database", etc. - worker's load/resource profile for restart policies
-
-	// Log collection
-	LogCollectionService logcollection.LogCollectionService // Log collection service
-	LogConfig            *config.WorkerLogConfig            // Log collection configuration for this worker
-
-	// Health check override (✅ FIXED: Using monitoring.HealthCheckConfig for proper cohesiveness)
-	HealthCheck *monitoring.HealthCheckConfig // nil if not health checkable or if ExecuteCmd/AttachCmd are provided
-}
-
-// SystemProcessControlConfig defines configuration for system-managed processes
-type SystemProcessControlConfig struct {
-	// Basic control
-	CanTerminate bool `yaml:"can_terminate,omitempty"` // Can send SIGTERM/SIGKILL
-	CanRestart   bool `yaml:"can_restart,omitempty"`   // Can restart (via service manager)
-
-	// Service manager integration
-	ServiceManager string `yaml:"service_manager,omitempty"` // "systemd", "windows", "launchd"
-	ServiceName    string `yaml:"service_name,omitempty"`    // Service name for restart
-
-	// Process signals
-	AllowedSignals []os.Signal `yaml:"allowed_signals,omitempty"` // Allowed signals to send
-
-	// Graceful shutdown
-	GracefulTimeout time.Duration `yaml:"graceful_timeout,omitempty"` // Time to wait for graceful shutdown
-}
-
-// ManagedProcessControlConfig defines configuration for managed processes
-type ManagedProcessControlConfig struct {
-	// Process execution
-	Execution process.ExecutionConfig `yaml:"execution"`
-
-	// PID file configuration (optional)
-	ProcessFile processfile.ProcessFileConfig `yaml:"process_file,omitempty"`
-
-	// Process restart configuration (Context-aware restart replaces simple Restart)
-	ContextAwareRestart ContextAwareRestartConfig `yaml:"context_aware_restart"`
-	RestartPolicy       RestartPolicy             `yaml:"restart_policy"` // Policy for health monitor
-
-	// Resource management
-	Limits resourcelimits.ResourceLimits `yaml:"limits,omitempty"`
-
-	// Graceful shutdown
-	GracefulTimeout time.Duration `yaml:"graceful_timeout,omitempty"` // Time to wait for graceful shutdown
 }

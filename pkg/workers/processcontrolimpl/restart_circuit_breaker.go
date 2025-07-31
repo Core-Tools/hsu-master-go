@@ -24,7 +24,7 @@ type CircuitBreakerState struct {
 // RestartCircuitBreaker interface with context awareness
 type RestartCircuitBreaker interface {
 	GetState() CircuitBreakerState
-	ExecuteRestart(restartFunc RestartFunc, context processcontrol.RestartContext) error // ✅ UNIFIED: Now takes context parameter
+	ExecuteRestart(restartFunc RestartFunc, context processcontrol.RestartContext) error
 	Reset()
 }
 
@@ -47,7 +47,7 @@ var (
 	}
 )
 
-// ✅ UNIFIED: Single constructor function for context-aware circuit breaker
+// Single constructor function for context-aware circuit breaker
 func NewRestartCircuitBreaker(config *processcontrol.ContextAwareRestartConfig, id string, workerProfileType string, logger logging.Logger) RestartCircuitBreaker {
 	severityMultipliers := config.SeverityMultipliers
 	if severityMultipliers == nil {
@@ -79,12 +79,12 @@ type enhancedRestartCircuitBreaker struct {
 	basicConfig       *processcontrol.RestartConfig
 	enhancedConfig    *processcontrol.ContextAwareRestartConfig
 	id                string
-	workerProfileType string         // ✅ RENAMED: Worker's load/resource profile type
-	logger            logging.Logger // ✅ FIXED: Added missing logger field
+	workerProfileType string
+	logger            logging.Logger
 
 	// Multipliers
 	severityMultipliers      map[string]float64
-	workerProfileMultipliers map[string]float64 // ✅ RENAMED: Worker profile type multipliers
+	workerProfileMultipliers map[string]float64
 
 	// State
 	restartAttempts    int                               // Track attempts across all restart sources
@@ -96,7 +96,7 @@ type enhancedRestartCircuitBreaker struct {
 	mutex              sync.Mutex                        // Protect restart state
 }
 
-// ✅ SIMPLIFIED: ExecuteRestart now takes context parameter (renamed from ExecuteRestartWithContext)
+// ExecuteRestart now takes context parameter (renamed from ExecuteRestartWithContext)
 func (rcb *enhancedRestartCircuitBreaker) ExecuteRestart(restartFunc RestartFunc, context processcontrol.RestartContext) error {
 	rcb.mutex.Lock()
 	defer rcb.mutex.Unlock()
@@ -254,7 +254,7 @@ func (rcb *enhancedRestartCircuitBreaker) applyMultipliers(baseValue int, contex
 		multiplier *= severityMult
 	}
 
-	// ✅ RENAMED: Apply worker profile type multiplier
+	// Apply worker profile type multiplier
 	workerProfileType := context.WorkerProfileType
 	if workerProfileType == "" {
 		workerProfileType = "default"
@@ -284,7 +284,7 @@ func (rcb *enhancedRestartCircuitBreaker) applyDurationMultipliers(baseDuration 
 		multiplier *= severityMult
 	}
 
-	// ✅ RENAMED: Apply worker profile type multiplier
+	// Apply worker profile type multiplier
 	workerProfileType := context.WorkerProfileType
 	if workerProfileType == "" {
 		workerProfileType = "default"

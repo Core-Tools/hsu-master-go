@@ -1,4 +1,5 @@
-- restarts by resource violation close the circuit breaker
+- time.Sleep in circuit breaker - needs wait with context
+- need Reset for circuit breaker on resource violation reset?
 - per-worker logs files
 - unit tests for health check
 - unit tests for resource limits
