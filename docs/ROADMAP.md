@@ -108,7 +108,7 @@ HSU Master is a revolutionary process manager that embeds Kubernetes-style orche
 | Platform | Status | Target Version | Key Features |
 |----------|--------|----------------|--------------|
 | **Windows** | ✅ **Production Ready** | Windows 7+ | Job Objects, Console Signal Handling, Resource Limits |
-| **macOS** | 🚧 **In Progress** | Catalina 10.15+ | Native Resource APIs, Sandbox Integration, launchd Support |
+| **macOS** | 🚧 **In Progress** | High Sierra 10.13+ | Native Resource APIs, Sandbox Integration, launchd Support |
 | **Linux** | 📋 **Planned** | Modern Distributions | cgroups v1/v2, systemd Integration, Container Runtime Support |
 
 ### **🍎 macOS Implementation Priority**
