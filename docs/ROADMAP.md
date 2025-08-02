@@ -118,7 +118,7 @@ HSU Master is a revolutionary process manager that embeds Kubernetes-style orche
 - **Resource Monitoring**: Native macOS APIs (task_info, system resource APIs)
 - **Resource Limits**: POSIX resource limits (getrlimit/setrlimit)
 - **Advanced Features**: Sandbox profiles, launchd integration
-- **Compatibility**: Go 1.22 support ensures broad macOS version compatibility
+- **Compatibility**: Go 1.20-1.22 support ensures broad macOS version compatibility
 
 **Benefits**:
 - **Native Performance**: Direct system API access without container overhead
