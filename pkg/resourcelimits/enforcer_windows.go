@@ -50,8 +50,8 @@ const (
 
 // Windows Job Object structures
 type jobObjectBasicLimitInformation struct {
-	PerProcessUserTimeLimit uint64
-	PerJobUserTimeLimit     uint64
+	PerProcessUserTimeLimit int64
+	PerJobUserTimeLimit     int64
 	LimitFlags              uint32
 	MinimumWorkingSetSize   uintptr
 	MaximumWorkingSetSize   uintptr
@@ -111,6 +111,14 @@ func newWindowsResourceEnforcer(logger logging.Logger) *windowsResourceEnforcer 
 
 // applyMemoryLimitsImpl applies memory limits using Job Objects (implementation)
 func applyMemoryLimitsImpl(pid int, limits *MemoryLimits, logger logging.Logger) error {
+	holdsPrivileges, err := currentProcessHoldsPrivilegesForMemoryLimits()
+	if err != nil {
+		return fmt.Errorf("error checking privileges: %v", err)
+	}
+	if !holdsPrivileges {
+		return fmt.Errorf("current process does not hold privileges for memory limits")
+	}
+
 	enforcer := newWindowsResourceEnforcer(logger)
 
 	// Create or get existing job object
@@ -125,7 +133,16 @@ func applyMemoryLimitsImpl(pid int, limits *MemoryLimits, logger logging.Logger)
 	// Set working set limits (RSS)
 	if limits.MaxRSS > 0 {
 		extendedInfo.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_WORKINGSET
-		extendedInfo.BasicLimitInformation.MinimumWorkingSetSize = 0
+		// https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-jobobject_basic_limit_information
+		// states that:
+		//   > If MaximumWorkingSetSize is nonzero, MinimumWorkingSetSize cannot be zero.
+		// Thus, use some reasonably small default value.
+		var defaultMinWorkingSetSize int64 = 4 * 1024 * 1024 // 4MB
+		if limits.MaxRSS < defaultMinWorkingSetSize {
+			return fmt.Errorf("MaxRSS is too low (%d bytes), must be greater than %d bytes (hard-coded default minimum)",
+				limits.MaxRSS, defaultMinWorkingSetSize)
+		}
+		extendedInfo.BasicLimitInformation.MinimumWorkingSetSize = uintptr(defaultMinWorkingSetSize)
 		extendedInfo.BasicLimitInformation.MaximumWorkingSetSize = uintptr(limits.MaxRSS)
 
 		logger.Infof("Setting working set limit for PID %d: %d bytes", pid, limits.MaxRSS)
@@ -138,6 +155,8 @@ func applyMemoryLimitsImpl(pid int, limits *MemoryLimits, logger logging.Logger)
 
 		logger.Infof("Setting process memory limit for PID %d: %d bytes", pid, limits.MaxVirtual)
 	}
+
+	logger.Debugf("applyMemoryLimitsImpl is about to call SetInformationJobObject: %+v", extendedInfo)
 
 	// Apply the limits
 	ret, _, err := enforcer.setInformationJobObject.Call(
@@ -171,7 +190,7 @@ func applyCPULimitsImpl(pid int, limits *CPULimits, logger logging.Logger) error
 	if limits.MaxTime > 0 {
 		basicInfo.LimitFlags |= JOB_OBJECT_LIMIT_PROCESS_TIME
 		// Convert to 100-nanosecond intervals (Windows FILETIME units)
-		basicInfo.PerProcessUserTimeLimit = uint64(limits.MaxTime.Nanoseconds() / 100)
+		basicInfo.PerProcessUserTimeLimit = int64(limits.MaxTime.Nanoseconds() / 100)
 
 		logger.Infof("Setting CPU time limit for PID %d: %v", pid, limits.MaxTime)
 	}
