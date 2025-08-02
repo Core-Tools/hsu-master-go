@@ -55,6 +55,8 @@ Thumbs.db
 *.exe
 *.war
 *.dll
+cmd/srv/mastersrv/mastersrv
+cmd/test/echotest/echotest
 
 # Large media files
 *.mp4
