@@ -1,7 +1,9 @@
-- time.Sleep in circuit breaker - needs wait with context
-- need Reset for circuit breaker on resource violation reset?
-- per-worker logs files
-- unit tests for health check
-- unit tests for resource limits
-- unit tests for circuit breaker
-- unit tests for workersstatemachine
+1. time.Sleep in circuit breaker - needs wait with context
+2. do we need to call Reset for circuit breaker on resource violation reset?
+3. brainstorm on integrated units support:
+   - currently they do not differ from managed unit
+   - we could do health check calling gRPC/HTTP APIs for them (they are mandated to support either of) - should we?
+   - we could enhance the log collection for attached case (currently not possible due to system restrictions), 
+     e.g via special log streaming API
+   - what else?
+4. test/verify the unmanaged units support

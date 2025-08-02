@@ -1,6 +1,6 @@
-# References and Best Practices for Setting Memory Limits with Required Windows Privileges
+# References and Best Practices for Setting Resource Limits with Required Windows Privileges
 
-To set the memory limits in Windows, the process needs to hold either `SeIncreaseQuotaPrivilege` or `SeDebugPrivilege` privilege.
+To set resource limits (memory, CPU, and process limits) in Windows using Job Objects, the process needs to hold either `SeIncreaseQuotaPrivilege` or `SeDebugPrivilege` privilege.
 
 It is **not possible** to programmatically grant or enable `SeIncreaseQuotaPrivilege` or `SeDebugPrivilege` purely at runtime in code. These privileges are controlled by Windows security policies and require administrative intervention.
 
@@ -11,7 +11,7 @@ It is **not possible** to programmatically grant or enable `SeIncreaseQuotaPrivi
 - **`SeIncreaseQuotaPrivilege` ("Adjust memory quotas for a process")** and **`SeDebugPrivilege` ("Debug programs")** are typically assigned to the **Administrators** group by default on Windows.
 - These privileges are **NOT always enabled by default**, even for Administrator accounts, and often need manual enabling via system administration tools.
 - Ordinary user accounts **do not have these privileges** and cannot elevate themselves in code without appropriate rights.
-- To enable the "set memory limits" feature, users must:
+- To enable the "set resource limits" feature (memory, CPU, process limits), users must:
   - Run the program under an account with these privileges assigned.
   - Verify and adjust privilege assignment in **Local Security Policy** or via **Group Policy**.
   - The program itself should enable the privileges in its token during startup using `AdjustTokenPrivileges`.
@@ -52,10 +52,12 @@ After running with sufficient rights, your program should enable the privileges 
 ## Additional Notes
 
 - These privileges allow powerful operations; hence they are restricted to minimize security risks.
-- Proper assignment and enabling of these privileges is crucial to avoid errors like  
-> "A required privilege is not held by the client."
+- Proper assignment and enabling of these privileges is crucial to avoid errors like:
+  > "current process does not hold privileges for memory limits"
+  > "current process does not hold privileges for CPU limits"
 - Always encourage customers to operate under the principle of least privilege while granting necessary rights.
-- Detailed developer and sysadmin documentation is available on Microsoft Docs regarding privileges and job object memory quotas.
+- The HSU Master process automatically detects missing privileges and provides clear error messages.
+- Detailed developer and sysadmin documentation is available on Microsoft Docs regarding privileges and job object resource quotas.
 
 ---
 

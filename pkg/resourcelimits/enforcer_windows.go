@@ -174,6 +174,14 @@ func applyMemoryLimitsImpl(pid int, limits *MemoryLimits, logger logging.Logger)
 
 // applyCPULimitsImpl applies CPU limits using Job Objects (implementation)
 func applyCPULimitsImpl(pid int, limits *CPULimits, logger logging.Logger) error {
+	holdsPrivileges, err := currentProcessHoldsPrivilegesForMemoryLimits()
+	if err != nil {
+		return fmt.Errorf("error checking privileges: %v", err)
+	}
+	if !holdsPrivileges {
+		return fmt.Errorf("current process does not hold privileges for CPU limits")
+	}
+
 	enforcer := newWindowsResourceEnforcer(logger)
 
 	// Create or get existing job object
