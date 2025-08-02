@@ -156,8 +156,6 @@ func applyMemoryLimitsImpl(pid int, limits *MemoryLimits, logger logging.Logger)
 		logger.Infof("Setting process memory limit for PID %d: %d bytes", pid, limits.MaxVirtual)
 	}
 
-	logger.Debugf("applyMemoryLimitsImpl is about to call SetInformationJobObject: %+v", extendedInfo)
-
 	// Apply the limits
 	ret, _, err := enforcer.setInformationJobObject.Call(
 		uintptr(jobHandle),
