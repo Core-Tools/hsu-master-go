@@ -19,7 +19,8 @@ func newLinuxResourceMonitor(logger logging.Logger) PlatformResourceMonitor {
 }
 
 func (l *linuxResourceMonitor) GetProcessUsage(pid int) (*ResourceUsage, error) {
-	// TODO: Implement Linux-specific resource monitoring using /proc filesystem
+	// Note: Linux-specific resource monitoring planned for Phase 4
+	// Implementation strategy: /proc/{pid}/stat, /proc/{pid}/status, /proc/{pid}/io for comprehensive metrics
 	l.logger.Debugf("Linux resource monitoring for PID %d - using generic implementation for now", pid)
 	return newGenericResourceMonitor(l.logger).GetProcessUsage(pid)
 }

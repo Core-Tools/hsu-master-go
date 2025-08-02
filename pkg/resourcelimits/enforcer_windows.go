@@ -208,7 +208,8 @@ func applyCPULimitsImpl(pid int, limits *CPULimits, logger logging.Logger) error
 
 	if limits.MaxPercent > 0 {
 		logger.Warnf("CPU percentage limits not directly supported via Job Objects for PID %d, consider using monitoring + throttling", pid)
-		// TODO: Implement CPU rate control or monitoring-based throttling
+		// Note: CPU rate control implementation planned for Phase 4
+		// Strategy: Monitoring-based throttling or Windows Job Object rate limiting extensions
 	}
 
 	// Apply the limits

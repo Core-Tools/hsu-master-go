@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/core-tools/hsu-master/pkg/errors"
 	"github.com/core-tools/hsu-master/pkg/logging"
 )
 
@@ -35,7 +36,10 @@ type resourceLimitManager struct {
 	violationCallback ResourceViolationCallback
 }
 
-// NewResourceLimitManager creates a new resource limit manager
+// NewResourceLimitManager creates a comprehensive resource limit manager with monitoring and violation detection.
+// Provides real-time resource usage tracking, configurable violation checking, and policy-based responses
+// (log, alert, restart, graceful shutdown, immediate kill). Integrates with circuit breakers for
+// production-grade resource management and worker protection.
 func NewResourceLimitManager(pid int, limits *ResourceLimits, logger logging.Logger) ResourceLimitManager {
 	// Create monitoring config if not provided
 	var monitoringConfig *ResourceMonitoringConfig
@@ -79,7 +83,7 @@ func (rlm *resourceLimitManager) Start(ctx context.Context) error {
 	defer rlm.mutex.Unlock()
 
 	if rlm.isRunning {
-		return fmt.Errorf("resource limit manager is already running")
+		return errors.NewValidationError("resource limit manager is already running", nil).WithContext("pid", rlm.pid)
 	}
 
 	if rlm.limits == nil {
@@ -219,7 +223,7 @@ func (rlm *resourceLimitManager) checkViolations() {
 	// Get current usage
 	usage, err := rlm.monitor.GetCurrentUsage()
 	if err != nil {
-		rlm.logger.Debugf("Failed to get current usage for violation check: %v", err)
+		rlm.logger.Debugf("Failed to get current usage for violation check on PID %d: %v", rlm.pid, err)
 		return
 	}
 
@@ -238,7 +242,7 @@ func (rlm *resourceLimitManager) checkViolations() {
 func (rlm *resourceLimitManager) dispatchViolation(violation *ResourceViolation) {
 	callback := rlm.getViolationCallback()
 
-	rlm.logger.Warnf("Resource violation for PID %d: %s, severity: %s", rlm.pid, violation.Message, violation.Severity)
+	rlm.logger.Warnf("Resource violation detected for worker with PID %d: %s, severity: %s", rlm.pid, violation.Message, violation.Severity)
 
 	// Trigger enforcement
 	if violation.Severity != ViolationSeverityCritical {
@@ -247,7 +251,7 @@ func (rlm *resourceLimitManager) dispatchViolation(violation *ResourceViolation)
 
 	policy := rlm.getPolicyByLimitType(violation.LimitType)
 	if policy == ResourcePolicy("") {
-		rlm.logger.Warnf("Invalid policy for resource limit type: %s", violation.LimitType)
+		rlm.logger.Warnf("Invalid policy for resource limit type %s on PID %d", violation.LimitType, rlm.pid)
 		return
 	}
 

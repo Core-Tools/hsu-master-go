@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/core-tools/hsu-master/pkg/errors"
 	"github.com/core-tools/hsu-master/pkg/logcollection/config"
 	"github.com/core-tools/hsu-master/pkg/processfile"
 )
@@ -101,7 +102,7 @@ func (s *logCollectionService) resolveWorkerOutputPath(outputConfig config.Outpu
 // Start starts the log collection service
 func (s *logCollectionService) Start(ctx context.Context) error {
 	if !atomic.CompareAndSwapInt32(&s.running, 0, 1) {
-		return fmt.Errorf("log collection service already running")
+		return errors.NewValidationError("log collection service already running", nil)
 	}
 
 	s.mu.Lock()
@@ -112,7 +113,7 @@ func (s *logCollectionService) Start(ctx context.Context) error {
 	// Initialize global output writers
 	if err := s.initializeOutputs(); err != nil {
 		atomic.StoreInt32(&s.running, 0)
-		return fmt.Errorf("failed to initialize outputs: %w", err)
+		return errors.NewInternalError("failed to initialize outputs", err)
 	}
 
 	s.logger.WithFields(
@@ -126,7 +127,7 @@ func (s *logCollectionService) Start(ctx context.Context) error {
 // Stop stops the log collection service
 func (s *logCollectionService) Stop() error {
 	if !atomic.CompareAndSwapInt32(&s.running, 1, 0) {
-		return fmt.Errorf("log collection service not running")
+		return errors.NewValidationError("log collection service not running", nil)
 	}
 
 	s.cancel()
@@ -165,14 +166,14 @@ func (s *logCollectionService) Stop() error {
 // RegisterWorker registers a new worker for log collection
 func (s *logCollectionService) RegisterWorker(workerID string, workerConfig config.WorkerLogConfig) error {
 	if atomic.LoadInt32(&s.running) == 0 {
-		return fmt.Errorf("log collection service not running")
+		return errors.NewValidationError("log collection service not running", nil)
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if _, exists := s.workers[workerID]; exists {
-		return fmt.Errorf("worker %s already registered", workerID)
+		return errors.NewConflictError("worker already registered", nil).WithContext("worker_id", workerID)
 	}
 
 	worker := newWorkerLogCollector(workerID, workerConfig, s.logger.WithWorker(workerID), s)
@@ -194,7 +195,7 @@ func (s *logCollectionService) UnregisterWorker(workerID string) error {
 
 	worker, exists := s.workers[workerID]
 	if !exists {
-		return fmt.Errorf("worker %s not registered", workerID)
+		return errors.NewNotFoundError("worker not registered", nil).WithContext("worker_id", workerID)
 	}
 
 	if err := worker.stop(); err != nil {
@@ -243,7 +244,7 @@ func (s *logCollectionService) ProcessLogLine(workerID string, line string, meta
 // ForwardLogs forwards logs to external targets
 func (s *logCollectionService) ForwardLogs(targets []LogOutputTarget) error {
 	// Implementation will be added in Phase 3
-	return fmt.Errorf("external forwarding not yet implemented")
+	return errors.NewInternalError("external forwarding not yet implemented", nil)
 }
 
 // ===== CONFIGURATION MANAGEMENT =====
@@ -251,7 +252,7 @@ func (s *logCollectionService) ForwardLogs(targets []LogOutputTarget) error {
 // UpdateConfiguration updates the service configuration
 func (s *logCollectionService) UpdateConfiguration(newConfig config.LogCollectionConfig) error {
 	if err := newConfig.Validate(); err != nil {
-		return fmt.Errorf("invalid configuration: %w", err)
+		return errors.NewValidationError("invalid configuration", err)
 	}
 
 	s.mu.Lock()
@@ -281,7 +282,7 @@ func (s *logCollectionService) GetWorkerStatus(workerID string) (*WorkerLogStatu
 
 	worker, exists := s.workers[workerID]
 	if !exists {
-		return nil, fmt.Errorf("worker %s not registered", workerID)
+		return nil, errors.NewNotFoundError("worker not registered", nil).WithContext("worker_id", workerID)
 	}
 
 	return worker.getStatus(), nil
@@ -330,7 +331,7 @@ func (s *logCollectionService) getWorker(workerID string) (*workerLogCollector, 
 
 	worker, exists := s.workers[workerID]
 	if !exists {
-		return nil, fmt.Errorf("worker %s not registered", workerID)
+		return nil, errors.NewNotFoundError("worker not registered", nil).WithContext("worker_id", workerID)
 	}
 
 	return worker, nil
@@ -353,7 +354,7 @@ func (s *logCollectionService) initializeOutputs() error {
 
 		writer, err := createOutputWriter(resolvedConfig)
 		if err != nil {
-			return fmt.Errorf("failed to create output writer for %s: %w", targetConfig.Type, err)
+			return errors.NewInternalError("failed to create output writer", err).WithContext("output_type", targetConfig.Type)
 		}
 		s.outputs = append(s.outputs, writer)
 	}
@@ -431,25 +432,23 @@ func (w *workerLogCollector) collectFromProcess(stdout, stderr io.Reader) error 
 		return nil
 	}
 
-	var err error
+	errorCollection := errors.NewErrorCollection()
 
 	if w.config.CaptureStdout && stdout != nil {
 		if streamErr := w.collectFromStream(stdout, StdoutStream); streamErr != nil {
-			err = fmt.Errorf("stdout collection failed: %w", streamErr)
+			wrappedErr := errors.NewInternalError("stdout collection failed", streamErr).WithContext("worker_id", w.workerID)
+			errorCollection.Add(wrappedErr)
 		}
 	}
 
 	if w.config.CaptureStderr && stderr != nil {
 		if streamErr := w.collectFromStream(stderr, StderrStream); streamErr != nil {
-			if err != nil {
-				err = fmt.Errorf("%v; stderr collection failed: %w", err, streamErr)
-			} else {
-				err = fmt.Errorf("stderr collection failed: %w", streamErr)
-			}
+			wrappedErr := errors.NewInternalError("stderr collection failed", streamErr).WithContext("worker_id", w.workerID)
+			errorCollection.Add(wrappedErr)
 		}
 	}
 
-	return err
+	return errorCollection.ToError()
 }
 
 // streamReader reads from a stream and processes log lines
@@ -512,7 +511,8 @@ func (w *workerLogCollector) processLogLine(line string, metadata LogMetadata) e
 		Timestamp: metadata.Timestamp,
 	}
 
-	// TODO: Add log processing pipeline in Phase 2
+	// Note: Advanced log processing pipeline planned for Phase 4
+	// Planned features: filtering, parsing, enhancement, structured metadata extraction
 	// For now, just create a basic log entry
 	logEntry := LogEntry{
 		Timestamp: rawEntry.Timestamp,
@@ -536,7 +536,8 @@ func (w *workerLogCollector) writeToOutputs(entry LogEntry) error {
 		}
 	}
 
-	// TODO: Write to worker-specific outputs (Phase 1 completion)
+	// Note: Worker-specific log files planned for Phase 4
+	// Feature: Individual log files per worker with configurable rotation and retention
 
 	return nil
 }

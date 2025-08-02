@@ -421,7 +421,7 @@ func (pc *processControl) handleResourceViolation(policy resourcelimits.Resource
 
 	case resourcelimits.ResourcePolicyAlert:
 		pc.logger.Errorf("ALERT: Resource limit exceeded: %s", violation.Message)
-		// TODO: Integrate with alerting system when available
+		// Note: Alerting system integration planned for Phase 5 (Enterprise Features)
 
 	case resourcelimits.ResourcePolicyRestart:
 		pc.logger.Errorf("RESTART: Resource limit exceeded, restarting process (policy: restart): %s", violation.Message)

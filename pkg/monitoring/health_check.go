@@ -124,6 +124,10 @@ type ProcessInfo struct {
 	PID int // Only PID is needed for process health checking
 }
 
+// NewHealthMonitor creates a health monitor for comprehensive application health checking.
+// Supports HTTP, gRPC, TCP, exec, and process health check types with configurable intervals,
+// retries, timeouts, and failure thresholds. Integrates with restart circuit breakers and
+// recovery callbacks for automated health management.
 func NewHealthMonitor(config *HealthCheckConfig, id string, logger logging.Logger) HealthMonitor {
 	return &healthMonitor{
 		config:   config,
@@ -359,7 +363,8 @@ func (h *healthMonitor) checkGRPC() (bool, string) {
 		h.id, h.config.GRPC.Address, h.config.GRPC.Service)
 
 	// For now, implement as TCP connection check
-	// TODO: Implement proper gRPC health check protocol
+	// Note: gRPC health check implementation planned for Phase 4
+	// Implementation strategy: Use official gRPC health checking protocol (grpc.health.v1.Health/Check)
 	address := h.config.GRPC.Address
 
 	// Parse address to get host and port

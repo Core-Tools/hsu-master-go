@@ -7,7 +7,9 @@ import (
 	"syscall"
 )
 
-// setupProcessAttributes configures Windows-specific process attributes
+// setupProcessAttributes configures Windows-specific process attributes for proper signal handling.
+// Sets CREATE_NEW_CONSOLE flag to enable Ctrl+C signal delivery to child processes,
+// which is essential for graceful termination in Windows console applications.
 func setupProcessAttributes(cmd *exec.Cmd) {
 	// This isolates children for termination but preserves master's signal handling
 	cmd.SysProcAttr = &syscall.SysProcAttr{

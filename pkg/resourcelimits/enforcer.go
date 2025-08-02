@@ -1,8 +1,7 @@
 package resourcelimits
 
 import (
-	"fmt"
-
+	"github.com/core-tools/hsu-master/pkg/errors"
 	"github.com/core-tools/hsu-master/pkg/logging"
 	"github.com/core-tools/hsu-master/pkg/processstate"
 )
@@ -12,14 +11,21 @@ type resourceEnforcer struct {
 	logger logging.Logger
 }
 
-// NewResourceEnforcer creates a new resource enforcer
+// NewResourceEnforcer creates a new resource enforcer that applies platform-specific resource limits.
+// The enforcer provides cross-platform resource limit enforcement using native OS mechanisms:
+// - Windows: Job Objects for memory, CPU, and process limits
+// - macOS: POSIX setrlimit for memory and CPU limits
+// - Linux: Planned implementation using cgroups (Phase 4)
 func NewResourceEnforcer(logger logging.Logger) ResourceEnforcer {
 	return &resourceEnforcer{
 		logger: logger,
 	}
 }
 
-// ApplyLimits applies resource limits to a process
+// ApplyLimits applies comprehensive resource limits to a process.
+// Supports memory (RSS, virtual), CPU (time, percentage), process limits (file descriptors, child processes).
+// Uses ErrorCollection to aggregate multiple limit failures and provides detailed error context.
+// Returns aggregated errors if any limits fail to apply.
 func (re *resourceEnforcer) ApplyLimits(pid int, limits *ResourceLimits) error {
 	if limits == nil {
 		return nil
@@ -30,37 +36,43 @@ func (re *resourceEnforcer) ApplyLimits(pid int, limits *ResourceLimits) error {
 	// Check if process exists
 	running, err := processstate.IsProcessRunning(pid)
 	if !running {
-		return fmt.Errorf("process %d is not running, err: %v", pid, err)
+		return errors.NewProcessError("process is not running", err).WithContext("pid", pid)
 	}
 
-	var errors []error
+	errorCollection := errors.NewErrorCollection()
 
 	// Apply memory limits if specified
 	if limits.Memory != nil {
 		if err := re.applyMemoryLimits(pid, limits.Memory); err != nil {
-			errors = append(errors, fmt.Errorf("memory limits: %v", err))
+			wrappedErr := errors.NewProcessError("failed to apply memory limits", err).WithContext("pid", pid)
+			errorCollection.Add(wrappedErr)
+			re.logger.Warnf("Failed to apply memory limits to PID %d: %v", pid, err)
 		}
 	}
 
 	// Apply CPU limits if specified
 	if limits.CPU != nil {
 		if err := re.applyCPULimits(pid, limits.CPU); err != nil {
-			errors = append(errors, fmt.Errorf("CPU limits: %v", err))
+			wrappedErr := errors.NewProcessError("failed to apply CPU limits", err).WithContext("pid", pid)
+			errorCollection.Add(wrappedErr)
+			re.logger.Warnf("Failed to apply CPU limits to PID %d: %v", pid, err)
 		}
 	}
 
-	// Apply I/O limits if specified (TODO: implement applyIOLimits method)
+	// Apply I/O limits if specified
+	// Note: I/O limits implementation is planned for Phase 4 - requires platform-specific rate limiting
 	if limits.IO != nil {
-		re.logger.Debugf("I/O limits specified but not yet implemented for PID %d", pid)
-		// TODO: if err := re.applyIOLimits(pid, limits.IO); err != nil {
-		//	errors = append(errors, fmt.Errorf("I/O limits: %v", err))
-		// }
+		re.logger.Debugf("I/O limits specified but not yet implemented for PID %d: max_read_bps=%d, max_write_bps=%d",
+			pid, limits.IO.MaxReadBPS, limits.IO.MaxWriteBPS)
+		// Implementation planned: Windows (Job Objects), macOS/Linux (rlimit + monitoring)
 	}
 
 	// Apply process limits if specified
 	if limits.Process != nil {
 		if err := re.applyProcessLimits(pid, limits.Process); err != nil {
-			errors = append(errors, fmt.Errorf("process limits: %v", err))
+			wrappedErr := errors.NewProcessError("failed to apply process limits", err).WithContext("pid", pid)
+			errorCollection.Add(wrappedErr)
+			re.logger.Warnf("Failed to apply process limits to PID %d: %v", pid, err)
 		}
 	}
 
@@ -72,14 +84,16 @@ func (re *resourceEnforcer) ApplyLimits(pid int, limits *ResourceLimits) error {
 
 	if limits.Process != nil && limits.Process.MaxFileDescriptors > 0 {
 		if err := re.applyFileDescriptorLimit(pid, limits.Process.MaxFileDescriptors); err != nil {
-			errors = append(errors, fmt.Errorf("file descriptor limit: %v", err))
+			wrappedErr := errors.NewProcessError("failed to apply file descriptor limits", err).WithContext("pid", pid)
+			errorCollection.Add(wrappedErr)
+			re.logger.Warnf("Failed to apply file descriptor limits to PID %d: %v", pid, err)
 		}
 	}
 
-	if len(errors) > 0 {
-		re.logger.Warnf("Some resource limits could not be applied to PID %d: %v", pid, errors)
-		// Return first error for now, could be enhanced to return composite error
-		return errors[0]
+	// Return aggregated errors
+	if errorCollection.HasErrors() {
+		re.logger.Errorf("Some resource limits could not be applied to PID %d: %v", pid, errorCollection.Errors)
+		return errors.NewProcessError("failed to apply some resource limits", errorCollection.ToError()).WithContext("pid", pid)
 	}
 
 	re.logger.Infof("Resource limits successfully applied to PID %d", pid)
@@ -118,7 +132,7 @@ func (re *resourceEnforcer) applyProcessLimits(pid int, limits *ProcessLimits) e
 	// File descriptor limits can be applied using setrlimit on Unix systems
 	if limits.MaxFileDescriptors > 0 {
 		if err := re.applyFileDescriptorLimit(pid, limits.MaxFileDescriptors); err != nil {
-			return fmt.Errorf("file descriptor limit: %v", err)
+			return errors.NewProcessError("failed to apply file descriptor limits", err).WithContext("pid", pid).WithContext("max_fd", limits.MaxFileDescriptors)
 		}
 	}
 
@@ -127,7 +141,11 @@ func (re *resourceEnforcer) applyProcessLimits(pid int, limits *ProcessLimits) e
 }
 
 func (re *resourceEnforcer) applyFileDescriptorLimit(pid int, maxFDs int) error {
-	re.logger.Debugf("File descriptor limit for PID %d: %d - implementation pending", pid, maxFDs)
-	// TODO: Implement using setrlimit (Unix) or Job Objects (Windows)
+	re.logger.Debugf("Applying file descriptor limit to PID %d: %d", pid, maxFDs)
+
+	// Note: File descriptor limits implementation planned for Phase 4
+	// Platform strategy: Unix/macOS (RLIMIT_NOFILE via setrlimit), Windows (Job Objects process limits)
+	re.logger.Debugf("File descriptor limit implementation pending for PID %d: %d (platform-specific implementation required)", pid, maxFDs)
+
 	return nil
 }

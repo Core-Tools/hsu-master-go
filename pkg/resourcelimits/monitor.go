@@ -2,10 +2,10 @@ package resourcelimits
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
+	"github.com/core-tools/hsu-master/pkg/errors"
 	"github.com/core-tools/hsu-master/pkg/logging"
 	"github.com/core-tools/hsu-master/pkg/processstate"
 )
@@ -74,7 +74,7 @@ func (rm *resourceMonitor) Start(ctx context.Context) error {
 	defer rm.mutex.Unlock()
 
 	if rm.isRunning {
-		return fmt.Errorf("resource monitor is already running")
+		return errors.NewValidationError("resource monitor is already running", nil).WithContext("pid", rm.pid)
 	}
 
 	if !rm.config.Enabled {
@@ -86,7 +86,7 @@ func (rm *resourceMonitor) Start(ctx context.Context) error {
 	running, err := processstate.IsProcessRunning(rm.pid)
 	if !running {
 		rm.logger.Infof("Not running process PID %d, err: %v for resource monitoring", rm.pid, err)
-		return fmt.Errorf("process %d is not running, err: %v", rm.pid, err)
+		return errors.NewProcessError("process is not running", err).WithContext("pid", rm.pid)
 	}
 
 	rm.ctx, rm.cancel = context.WithCancel(ctx)
@@ -127,12 +127,12 @@ func (rm *resourceMonitor) GetCurrentUsage() (*ResourceUsage, error) {
 	// Check if process exists
 	running, err := processstate.IsProcessRunning(rm.pid)
 	if !running {
-		return nil, fmt.Errorf("process %d is not running, err: %v", rm.pid, err)
+		return nil, errors.NewProcessError("process is not running", err).WithContext("pid", rm.pid)
 	}
 
 	usage, err := rm.platformMonitor.GetProcessUsage(rm.pid)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get resource usage for PID %d: %v", rm.pid, err)
+		return nil, errors.NewInternalError("failed to get resource usage", err).WithContext("pid", rm.pid)
 	}
 
 	return usage, nil

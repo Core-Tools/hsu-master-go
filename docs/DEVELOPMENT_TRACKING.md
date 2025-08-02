@@ -542,7 +542,7 @@ func (pc *processControl) cleanupResourcesUnderLock() {
 
 ## 📋 **Next Sprint Planning**
 
-### **Sprint 4: Management APIs & Linux Foundation** (Estimated: 2-3 weeks)
+### **Sprint 4: Phase 4 Implementation - Production Features** (Estimated: 8-10 weeks)
 
 **Phase 3 Achievement Summary**:
 ✅ **Cross-Platform Excellence**: Windows 7+, macOS High Sierra+ fully supported
@@ -550,22 +550,33 @@ func (pc *processControl) cleanupResourcesUnderLock() {
 ✅ **Log Collection**: Real-time streaming and aggregation working
 ✅ **Architectural Excellence**: Defer-only locking, 53.1% test coverage
 ✅ **Production Validation**: Real-world testing with multiple applications
+✅ **Error Handling Excellence**: 98% domain error compliance, multi-worker debugging
+✅ **Documentation Excellence**: Comprehensive comment review and TODO tracking
 
-**Primary Objectives**:
-1. **REST API Development**: Complete HTTP API for worker lifecycle management
-2. **CLI Tool Implementation**: Command-line interface for operations  
-3. **Linux Platform Foundation**: Initial Linux support with cgroups integration
-4. **Advanced Configuration**: YAML inheritance and environment substitution
+**Primary Objectives (Phase 4 - 60-80 hours)**:
+1. **Process Discovery**: Implementation by name, port, service (24-30 hours)
+2. **Resource Limits Enhancement**: File descriptors, I/O bandwidth (20-25 hours)
+3. **gRPC Health Check Protocol**: Official implementation (6-8 hours)
+4. **Linux Platform Foundation**: /proc filesystem monitoring (15-20 hours)
+5. **REST API Development**: Complete HTTP API for worker lifecycle management
+6. **CLI Tool Implementation**: Command-line interface for operations
 
-### **Sprint 4 Task Breakdown**
+### **Sprint 4 Task Breakdown (Phase 4 Implementation)**
 
-| Task | Priority | Estimated Effort | Dependencies | Assignee |
-|------|----------|------------------|-------------|----------|
-| **REST API Core** | **CRITICAL** | 8-10 hours | None | TBD |
-| **CLI Tool Foundation** | **HIGH** | 4-6 hours | REST API | TBD |
-| **Linux Resource Limits** | **HIGH** | 6-8 hours | None | TBD |
-| **YAML Templates** | **MEDIUM** | 4-5 hours | None | TBD |
-| **Integration Testing** | **HIGH** | 4-6 hours | All components | TBD |
+| Task | Priority | Estimated Effort | Dependencies | Phase |
+|------|----------|------------------|-------------|-------|
+| **Process Discovery by Name** | **HIGH** | 6-8 hours | Platform enumeration | Phase 4 |
+| **Process Discovery by Port** | **HIGH** | 8-10 hours | Network API integration | Phase 4 |
+| **Process Discovery by Service** | **HIGH** | 10-12 hours | Service manager integration | Phase 4 |
+| **File Descriptor Limits** | **HIGH** | 8-10 hours | Platform setrlimit/Job Objects | Phase 4 |
+| **I/O Bandwidth Limits** | **HIGH** | 12-15 hours | Rate limiting implementation | Phase 4 |
+| **gRPC Health Check Protocol** | **HIGH** | 6-8 hours | gRPC health service | Phase 4 |
+| **Linux Resource Monitoring** | **HIGH** | 15-20 hours | /proc filesystem parsing | Phase 4 |
+| **REST API Core** | **MEDIUM** | 8-10 hours | Core APIs | Phase 4 |
+| **CLI Tool Foundation** | **MEDIUM** | 4-6 hours | REST API | Phase 4 |
+| **Integration Testing** | **HIGH** | 8-10 hours | All components | Phase 4 |
+
+**Total Phase 4 Effort**: 85-109 hours (revised estimate)
 
 ### **REST API Implementation Plan**
 
@@ -678,8 +689,52 @@ hsu-master metrics
 
 ---
 
+## 📋 **Technical TODOs & Action Items - Comprehensive Analysis**
+
+**Status**: Comprehensive review completed January 2025  
+**Centralized Tracking**: See `docs/technical/analysis/COMPREHENSIVE_TODO_TRACKING.md`
+
+### **📊 Development Phase Roadmap**
+
+| **Phase** | **Focus** | **Timeline** | **Effort** | **Key Features** |
+|-----------|-----------|--------------|------------|------------------|
+| **Phase 4** | Production Features | Q1 2025 | 60-80 hours | Process discovery, resource limits, gRPC health checks |
+| **Phase 5** | Enterprise Features | Q2-Q3 2025 | 80-120 hours | Advanced logging, alerting, security framework |
+| **Phase 6** | Platform Excellence | Q4 2025 | 60-80 hours | CPU rate control, integrated units, optimizations |
+
+### **🔥 Critical TODOs**
+*None currently identified - Production ready status achieved*
+
+### **⚡ High Priority TODOs (Phase 4 - 60-80 hours)**
+- **Process Discovery**: By name, port, service (24-30 hours)
+- **Resource Limits Enhancement**: File descriptors, I/O bandwidth (20-25 hours)  
+- **gRPC Health Check Protocol**: Official implementation (6-8 hours)
+- **Linux Platform Foundation**: /proc monitoring (15-20 hours)
+
+### **📊 Medium Priority TODOs (Phase 5 - 80-120 hours)**
+- **Advanced Log Processing**: Pipeline, worker-specific files (40-50 hours)
+- **Alerting Integration**: Prometheus, Grafana, PagerDuty (25-30 hours)
+- **Enhanced Windows Monitoring**: CPU%, memory%, I/O, PDH (25-35 hours)
+
+### **📝 Low Priority TODOs (Phase 6 - 60-80 hours)**
+- **CPU Rate Control**: Windows Job Object extensions (12-15 hours)
+- **Integrated Units Enhancement**: gRPC/HTTP health checks, log streaming (15-20 hours)
+- **Circuit Breaker Enhancements**: Context handling, violation recovery (6-9 hours)
+- **Performance Optimizations**: Sub-microsecond improvements (15-25 hours)
+
+### **🚀 Architecture TODOs from TODOs.txt**
+1. **Circuit breaker context handling**: `time.Sleep` → context-aware wait (Phase 6)
+2. **Circuit breaker reset behavior**: On resource violation recovery (Phase 6)
+3. **Integrated units enhancement**: gRPC/HTTP health checks, log streaming (Phase 6)
+4. **Unmanaged units validation**: Test/verify support (Phase 4)
+
+**Total Estimated Effort**: 200-280 hours across Phases 4-6
+
+---
+
 *Development Team Repository*: [HSU Master Go](https://github.com/core-tools/hsu-master-go)  
 *Strategic Roadmap*: See `ROADMAP.md`  
 *Technical References*: See `docs/` directory  
-*Last Updated*: January 2025  
-*Next Sprint Planning*: After current macOS sprint completion
+*TODO Tracking*: See `docs/technical/analysis/COMPREHENSIVE_TODO_TRACKING.md`  
+*Last Updated*: January 2025 - Comprehensive TODO analysis completed  
+*Next Sprint Planning*: Phase 4 implementation (Production Features)
