@@ -114,8 +114,8 @@ func TestProcessControl_Start_StateTransitions(t *testing.T) {
 				}
 			},
 			expectError: true,
-			finalState:  processcontrol.ProcessStateIdle,
-			description: "Failed start should reset state to Idle",
+			finalState:  processcontrol.ProcessStateFailedStart,
+			description: "Failed start should set state to FailedStart for diagnostics",
 		},
 	}
 

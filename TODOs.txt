@@ -7,3 +7,19 @@
      e.g via special log streaming API
    - what else?
 4. test/verify the unmanaged units support
+
+------------ Code:
+- split new diagnostic type from processcontrol/process_state.go into a separate file
+- split structs from workerstatemachines/ single go file into a separate files
+
+------------ More:
++ API to check worker executable file exists, worker spawn/restart status
+- 2 concurrent masters
+- worker dependencies
+- parse worker logs from files
+- metrics (Alerting Integration)
+- worker configs in separate files (in well-known location?)
+
+------------ Extra:
+- download / install executable (is this hsu master features?)
+- api managemeent (is this a separate API gateway's feature?)

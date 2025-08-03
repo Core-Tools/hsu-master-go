@@ -14,10 +14,10 @@ import (
 	"github.com/core-tools/hsu-master/pkg/logcollection"
 	logconfig "github.com/core-tools/hsu-master/pkg/logcollection/config"
 	masterlogging "github.com/core-tools/hsu-master/pkg/logging"
+	"github.com/core-tools/hsu-master/pkg/master/workerstatemachine"
 	"github.com/core-tools/hsu-master/pkg/workers"
 	"github.com/core-tools/hsu-master/pkg/workers/processcontrol"
 	"github.com/core-tools/hsu-master/pkg/workers/processcontrolimpl"
-	"github.com/core-tools/hsu-master/pkg/workers/workerstatemachine"
 )
 
 type MasterOptions struct {
@@ -388,13 +388,19 @@ func (m *Master) Stop(ctx context.Context) {
 	m.logger.Infof("Master stopped")
 }
 
-// GetAllWorkerStates returns state information for all workers
-func (m *Master) GetAllWorkerStates() map[string]workerstatemachine.WorkerStateInfo {
+// GetAllWorkerStatesWithDiagnostics returns comprehensive state and diagnostic information for all workers
+func (m *Master) GetAllWorkerStatesWithDiagnostics() map[string]WorkerStateWithDiagnostics {
 	workerEntriesCopy := m.getAllWorkers()
 
-	result := make(map[string]workerstatemachine.WorkerStateInfo)
+	result := make(map[string]WorkerStateWithDiagnostics)
 	for id, workerEntry := range workerEntriesCopy {
-		result[id] = workerEntry.StateMachine.GetStateInfo()
+		processDiagnostics := workerEntry.ProcessControl.GetDiagnostics()
+		workerStateInfo := workerEntry.StateMachine.GetStateInfo()
+
+		result[id] = WorkerStateWithDiagnostics{
+			WorkerStateInfo:    workerStateInfo,
+			ProcessDiagnostics: processDiagnostics,
+		}
 	}
 	return result
 }
@@ -415,20 +421,26 @@ func (m *Master) GetWorkerState(id string) (workerstatemachine.WorkerState, erro
 	return workerEntry.StateMachine.GetCurrentState(), nil
 }
 
-// GetWorkerStateInfo returns comprehensive state information for a worker
-func (m *Master) GetWorkerStateInfo(id string) (workerstatemachine.WorkerStateInfo, error) {
+// GetWorkerStateWithDiagnostics returns comprehensive state and diagnostic information for a worker
+func (m *Master) GetWorkerStateWithDiagnostics(id string) (WorkerStateWithDiagnostics, error) {
 	// Validate worker ID
 	if err := ValidateWorkerID(id); err != nil {
-		return workerstatemachine.WorkerStateInfo{}, errors.NewValidationError("invalid worker ID", err).WithContext("worker_id", id)
+		return WorkerStateWithDiagnostics{}, errors.NewValidationError("invalid worker ID", err).WithContext("worker_id", id)
 	}
 
 	workerEntry, _, exists := m.getWorkerAndMasterState(id)
 
 	if !exists {
-		return workerstatemachine.WorkerStateInfo{}, errors.NewNotFoundError("worker not found", nil).WithContext("worker_id", id)
+		return WorkerStateWithDiagnostics{}, errors.NewNotFoundError("worker not found", nil).WithContext("worker_id", id)
 	}
 
-	return workerEntry.StateMachine.GetStateInfo(), nil
+	processDiagnostics := workerEntry.ProcessControl.GetDiagnostics()
+	workerStateInfo := workerEntry.StateMachine.GetStateInfo()
+
+	return WorkerStateWithDiagnostics{
+		WorkerStateInfo:    workerStateInfo,
+		ProcessDiagnostics: processDiagnostics,
+	}, nil
 }
 
 // IsWorkerOperationAllowed checks if an operation is allowed for a worker
@@ -452,6 +464,28 @@ func (m *Master) GetMasterState() MasterState {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 	return m.masterState
+}
+
+// WorkerStateWithDiagnostics combines worker state info with process diagnostics
+type WorkerStateWithDiagnostics struct {
+	workerstatemachine.WorkerStateInfo
+	ProcessDiagnostics processcontrol.ProcessDiagnostics // Detailed process diagnostics (includes State)
+}
+
+// GetWorkerProcessDiagnostics returns detailed process diagnostics for a worker
+func (m *Master) GetWorkerProcessDiagnostics(id string) (processcontrol.ProcessDiagnostics, error) {
+	// Validate worker ID
+	if err := ValidateWorkerID(id); err != nil {
+		return processcontrol.ProcessDiagnostics{}, errors.NewValidationError("invalid worker ID", err).WithContext("worker_id", id)
+	}
+
+	workerEntry, _, exists := m.getWorkerAndMasterState(id)
+
+	if !exists {
+		return processcontrol.ProcessDiagnostics{}, errors.NewNotFoundError("worker not found", nil).WithContext("worker_id", id)
+	}
+
+	return workerEntry.ProcessControl.GetDiagnostics(), nil
 }
 
 func (m *Master) stopWorkerProcessControls(ctx context.Context) {

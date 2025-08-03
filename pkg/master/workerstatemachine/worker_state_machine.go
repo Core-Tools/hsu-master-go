@@ -103,47 +103,38 @@ func NewWorkerStateMachine(workerID string, logger logging.Logger) *WorkerStateM
 	return wsm
 }
 
-// GetCurrentState returns the current state of the worker (thread-safe)
+// GetCurrentState returns the current state (thread-safe)
 func (wsm *WorkerStateMachine) GetCurrentState() WorkerState {
 	wsm.mutex.RLock()
 	defer wsm.mutex.RUnlock()
 	return wsm.currentState
 }
 
-// CanTransition checks if a state transition is valid
+// CanTransition checks if a state transition is valid (thread-safe)
 func (wsm *WorkerStateMachine) CanTransition(to WorkerState) bool {
 	wsm.mutex.RLock()
 	defer wsm.mutex.RUnlock()
-
-	validStates, exists := wsm.validTransitions[wsm.currentState]
-	if !exists {
-		return false
-	}
-
-	for _, validState := range validStates {
-		if validState == to {
-			return true
-		}
-	}
-	return false
+	return wsm.canTransitionUnsafe(to)
 }
 
-// Transition attempts to transition to a new state with validation
+// Transition changes the worker state with validation (thread-safe)
 func (wsm *WorkerStateMachine) Transition(to WorkerState, operation string, err error) error {
 	wsm.mutex.Lock()
 	defer wsm.mutex.Unlock()
 
-	from := wsm.currentState
-
 	// Validate transition
 	if !wsm.canTransitionUnsafe(to) {
 		return errors.NewValidationError(
-			fmt.Sprintf("invalid state transition from %s to %s for operation %s", from, to, operation),
+			fmt.Sprintf("invalid state transition from '%s' to '%s'", wsm.currentState, to),
 			nil,
-		).WithContext("worker_id", wsm.workerID).WithContext("current_state", string(from)).WithContext("target_state", string(to))
+		).WithContext("worker_id", wsm.workerID).
+			WithContext("from_state", string(wsm.currentState)).
+			WithContext("to_state", string(to)).
+			WithContext("operation", operation)
 	}
 
 	// Record transition
+	from := wsm.currentState
 	transition := WorkerStateTransition{
 		From:      from,
 		To:        to,

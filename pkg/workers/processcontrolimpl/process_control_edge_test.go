@@ -251,7 +251,7 @@ func TestProcessControl_ResourceExhaustionHandling(t *testing.T) {
 		err := pc.Start(ctx)
 
 		assert.Error(t, err, "Should fail to start without execute or attach commands")
-		assert.Equal(t, processcontrol.ProcessStateIdle, impl.GetState(), "Should remain in idle state after failure")
+		assert.Equal(t, processcontrol.ProcessStateFailedStart, impl.GetState(), "Should be in failed_start state after failure")
 	})
 
 	t.Run("handle_resource_limit_without_manager", func(t *testing.T) {
@@ -372,7 +372,7 @@ func TestProcessControl_UnusualSystemConditions(t *testing.T) {
 
 		err := pc.Start(ctx)
 		assert.Error(t, err, "Should fail with timeout")
-		assert.Equal(t, processcontrol.ProcessStateIdle, impl.GetState(), "Should remain idle after timeout")
+		assert.Equal(t, processcontrol.ProcessStateFailedStart, impl.GetState(), "Should be in failed_start state after timeout")
 	})
 
 	t.Run("memory_pressure_simulation", func(t *testing.T) {

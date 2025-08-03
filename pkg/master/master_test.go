@@ -10,11 +10,11 @@ import (
 	"time"
 
 	"github.com/core-tools/hsu-master/pkg/errors"
+	"github.com/core-tools/hsu-master/pkg/master/workerstatemachine"
 	"github.com/core-tools/hsu-master/pkg/monitoring"
 	"github.com/core-tools/hsu-master/pkg/process"
 	"github.com/core-tools/hsu-master/pkg/workers"
 	"github.com/core-tools/hsu-master/pkg/workers/processcontrol"
-	"github.com/core-tools/hsu-master/pkg/workers/workerstatemachine"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"

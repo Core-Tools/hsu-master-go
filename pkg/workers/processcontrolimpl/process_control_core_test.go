@@ -182,7 +182,7 @@ func TestProcessControl_Start_ComprehensiveScenarios(t *testing.T) {
 				return ctx
 			},
 			expectError:   true,
-			expectedState: processcontrol.ProcessStateIdle,
+			expectedState: processcontrol.ProcessStateFailedStart,
 			description:   "Start with cancelled context should fail",
 		},
 		{
@@ -197,7 +197,7 @@ func TestProcessControl_Start_ComprehensiveScenarios(t *testing.T) {
 			},
 			setupContext:  func() context.Context { return nil },
 			expectError:   true,
-			expectedState: processcontrol.ProcessStateIdle,
+			expectedState: processcontrol.ProcessStateFailedStart,
 			description:   "Start with nil context should fail",
 		},
 		{
@@ -210,7 +210,7 @@ func TestProcessControl_Start_ComprehensiveScenarios(t *testing.T) {
 			},
 			setupContext:  func() context.Context { return context.Background() },
 			expectError:   true,
-			expectedState: processcontrol.ProcessStateIdle,
+			expectedState: processcontrol.ProcessStateFailedStart,
 			description:   "Start without execute or attach commands should fail",
 		},
 		{
@@ -225,8 +225,8 @@ func TestProcessControl_Start_ComprehensiveScenarios(t *testing.T) {
 			},
 			setupContext:  func() context.Context { return context.Background() },
 			expectError:   true,
-			expectedState: processcontrol.ProcessStateIdle,
-			description:   "Failed execute command should return error and reset state",
+			expectedState: processcontrol.ProcessStateFailedStart,
+			description:   "Failed execute command should return error and set failed_start state",
 		},
 		{
 			name: "attach_command_failure_fallback_to_execute",

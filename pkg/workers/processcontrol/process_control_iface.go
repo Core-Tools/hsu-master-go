@@ -27,6 +27,9 @@ type ProcessControl interface {
 
 	// GetState returns the current process state
 	GetState() ProcessState
+
+	// GetDiagnostics returns detailed process diagnostics including error information
+	GetDiagnostics() ProcessDiagnostics
 }
 
 type AttachCmd func(ctx context.Context) (*os.Process, io.ReadCloser, *monitoring.HealthCheckConfig, error)
@@ -64,6 +67,6 @@ type ProcessControlOptions struct {
 	LogCollectionService logcollection.LogCollectionService // Log collection service
 	LogConfig            *logconfig.WorkerLogConfig         // Log collection configuration for this worker
 
-	// Health check override (✅ FIXED: Using monitoring.HealthCheckConfig for proper cohesiveness)
+	// Health check override
 	HealthCheck *monitoring.HealthCheckConfig // nil if not health checkable or if ExecuteCmd/AttachCmd are provided
 }

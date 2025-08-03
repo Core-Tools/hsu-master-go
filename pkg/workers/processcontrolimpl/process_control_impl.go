@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -65,6 +66,12 @@ type processControl struct {
 	// Worker profile type for context-aware restart decisions
 	workerProfileType string
 
+	// Error tracking for diagnostics
+	lastError       *processcontrol.ProcessError
+	failureCount    int
+	lastAttemptTime time.Time
+	startTime       *time.Time
+
 	// Mutex to protect concurrent access to fields
 	mutex sync.RWMutex
 }
@@ -100,6 +107,14 @@ func NewProcessControl(config processcontrol.ProcessControlOptions, workerID str
 func (pc *processControl) Start(ctx context.Context) error {
 	// Validate context
 	if ctx == nil {
+		// Set state to failed_start for consistency with enhanced error reporting
+		pc.mutex.Lock()
+		pc.state = processcontrol.ProcessStateFailedStart
+		pc.lastError = categorizeProcessError(errors.NewValidationError("context cannot be nil", nil))
+		pc.failureCount++
+		pc.lastAttemptTime = time.Now()
+		pc.mutex.Unlock()
+
 		return errors.NewValidationError("context cannot be nil", nil)
 	}
 
@@ -165,6 +180,48 @@ func (pc *processControl) GetState() processcontrol.ProcessState {
 	return pc.safeGetState()
 }
 
+// GetDiagnostics returns detailed process diagnostics including error information
+func (pc *processControl) GetDiagnostics() processcontrol.ProcessDiagnostics {
+	pc.mutex.RLock()
+	defer pc.mutex.RUnlock()
+
+	var processID int
+	if pc.process != nil {
+		processID = pc.process.Pid
+	}
+
+	// Determine process type and executable information
+	executablePath := ""
+	executableExists := true
+
+	if pc.config.ExecuteCmd != nil {
+		executablePath = "managed_process" // We don't extract path from ExecuteCmd
+		// For managed processes, use the last error to determine if executable exists
+		// This leverages the existing ensureExecutable logic instead of duplicating it
+		if pc.lastError != nil && pc.lastError.Category == processcontrol.ErrorCategoryExecutableNotFound {
+			executableExists = false
+		}
+	} else if pc.config.AttachCmd != nil {
+		executablePath = "unmanaged_process" // No executable path for unmanaged
+		// Unmanaged processes attach to existing processes, so "executable" always "exists"
+		executableExists = true
+	} else {
+		executablePath = "no_execution_method"
+		executableExists = false
+	}
+
+	return processcontrol.ProcessDiagnostics{
+		State:            pc.state,
+		LastError:        pc.lastError,
+		ProcessID:        processID,
+		StartTime:        pc.startTime,
+		ExecutablePath:   executablePath,
+		ExecutableExists: executableExists,
+		FailureCount:     pc.failureCount,
+		LastAttemptTime:  pc.lastAttemptTime,
+	}
+}
+
 func (pc *processControl) startInternal(ctx context.Context) error {
 	pc.logger.Infof("Starting process control for worker %s", pc.workerID)
 
@@ -182,14 +239,25 @@ func (pc *processControl) startInternal(ctx context.Context) error {
 	// Set state to starting to prevent concurrent operations
 	pc.state = processcontrol.ProcessStateStarting
 
+	// Track attempt time for diagnostics
+	pc.lastAttemptTime = time.Now()
+
 	process, stdout, healthCheckConfig, err := pc.startProcess(ctx)
 	if err != nil {
-		pc.state = processcontrol.ProcessStateIdle // ✅ Reset state on failure
+		pc.state = processcontrol.ProcessStateFailedStart // ✅ Use new failed start state
+
+		// Categorize and store the error for diagnostics
+		pc.lastError = categorizeProcessError(err)
+		pc.failureCount++
+
 		return errors.NewInternalError("failed to start process", err)
 	}
 
 	pc.process = process
 	pc.stdout = stdout
+	pc.startTime = &pc.lastAttemptTime // Record successful start time
+	pc.lastError = nil                 // Clear any previous error
+	pc.failureCount = 0                // Reset failure count on success
 
 	processDoneSignal := make(chan error, 1)
 
@@ -878,4 +946,54 @@ func (pc *processControl) stopLogCollection() error {
 	pc.logger.Infof("Log collection stopped for worker %s", pc.workerID)
 
 	return nil
+}
+
+// categorizeProcessError attempts to categorize an error based on its content and type
+func categorizeProcessError(err error) *processcontrol.ProcessError {
+	if err == nil {
+		return nil
+	}
+
+	errStr := strings.ToLower(err.Error())
+	var category string
+	var recoverable bool
+
+	// Check for common error patterns from multiple sources:
+	// - OS errors: "no such file or directory" (Unix), "cannot find the file" (Windows)
+	// - Go stdlib: "executable file not found in $PATH"
+	// Note: Our ensureExecutable wraps OS errors in DomainError, but the original OS error
+	//       is preserved in DomainError.Cause and included in the final error message,
+	//       so checking for OS patterns like "no such file" still works correctly.
+	switch {
+	case strings.Contains(errStr, "no such file") ||
+		strings.Contains(errStr, "executable file not found"):
+		category = processcontrol.ErrorCategoryExecutableNotFound
+		recoverable = true
+	case strings.Contains(errStr, "permission denied") || strings.Contains(errStr, "access denied"):
+		category = processcontrol.ErrorCategoryPermissionDenied
+		recoverable = true
+	case strings.Contains(errStr, "timeout") || strings.Contains(errStr, "deadline exceeded"):
+		category = processcontrol.ErrorCategoryTimeout
+		recoverable = true
+	case strings.Contains(errStr, "out of memory") || strings.Contains(errStr, "resource limit"):
+		category = processcontrol.ErrorCategoryResourceLimit
+		recoverable = true
+	case strings.Contains(errStr, "network") || strings.Contains(errStr, "connection"):
+		category = processcontrol.ErrorCategoryNetworkIssue
+		recoverable = true
+	case strings.Contains(errStr, "signal:") || strings.Contains(errStr, "exit status"):
+		category = processcontrol.ErrorCategoryProcessCrash
+		recoverable = false
+	default:
+		category = processcontrol.ErrorCategoryUnknown
+		recoverable = false
+	}
+
+	return &processcontrol.ProcessError{
+		Category:    category,
+		Details:     err.Error(),
+		Underlying:  err,
+		Timestamp:   time.Now(),
+		Recoverable: recoverable,
+	}
 }
