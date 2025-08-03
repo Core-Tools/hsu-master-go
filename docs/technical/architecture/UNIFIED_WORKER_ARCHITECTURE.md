@@ -112,6 +112,246 @@ stateDiagram-v2
     Failed --> Stopped: Give Up
 ```
 
+## Module Development Experience
+
+### For Module Authors: Single Unified Interface
+
+Module authors implement **one unified interface** that is used throughout the entire system - no separate internal interfaces:
+
+```go
+package worker
+
+// Module authors implement this interface
+// This SAME interface is used by:
+// - Module authors (to implement their modules)
+// - ModuleWorkerController (to manage modules)
+// - ModuleRuntime (to load/unload modules)  
+// - Master (to register and control modules)
+type WorkerModule interface {
+    // Lifecycle methods
+    Initialize(ctx context.Context, config map[string]interface{}) error
+    Start(ctx context.Context) error
+    Stop(ctx context.Context) error
+    
+    // Health and metadata
+    IsHealthy() bool
+    GetInfo() ModuleInfo
+}
+
+type ModuleInfo struct {
+    Name        string
+    Version     string
+    Description string
+    Author      string
+    Endpoints   []EndpointInfo  // What services this module exposes
+}
+
+type EndpointInfo struct {
+    Name     string
+    Type     string  // "grpc", "http", "function"
+    Address  string  // ":8080", "unix:/tmp/socket", or function name
+}
+```
+
+### Example Module Implementation
+
+```go
+package dataprocessor
+
+import (
+    "context"
+    "net"
+    "google.golang.org/grpc"
+    "github.com/core-tools/hsu-master/pkg/worker"
+)
+
+type DataProcessor struct {
+    config    Config
+    server    *grpc.Server
+    running   bool
+}
+
+func (dp *DataProcessor) Initialize(ctx context.Context, config map[string]interface{}) error {
+    dp.config = parseConfig(config)
+    dp.server = grpc.NewServer()
+    // Register gRPC services
+    RegisterDataProcessorService(dp.server, dp)
+    return nil
+}
+
+func (dp *DataProcessor) Start(ctx context.Context) error {
+    listener, err := net.Listen("tcp", dp.config.Port)
+    if err != nil {
+        return err
+    }
+    
+    go dp.server.Serve(listener)
+    dp.running = true
+    return nil
+}
+
+func (dp *DataProcessor) Stop(ctx context.Context) error {
+    dp.server.GracefulStop()
+    dp.running = false
+    return nil
+}
+
+func (dp *DataProcessor) IsHealthy() bool {
+    return dp.running
+}
+
+func (dp *DataProcessor) GetInfo() worker.ModuleInfo {
+    return worker.ModuleInfo{
+        Name:        "data-processor",
+        Version:     "1.2.3", 
+        Description: "High-performance data processing module",
+        Author:      "Data Team",
+        Endpoints: []worker.EndpointInfo{
+            {
+                Name:    "grpc-api",
+                Type:    "grpc",
+                Address: dp.config.Port,
+            },
+        },
+    }
+}
+
+// Factory function for module creation
+func NewDataProcessor() worker.WorkerModule {
+    return &DataProcessor{}
+}
+```
+
+## Module Compilation Models
+
+### Approach A: Native Go Modules (Recommended)
+
+**Modules compiled directly into the application binary**
+
+```go
+// main.go - Application entry point
+package main
+
+import (
+    "context"
+    "github.com/core-tools/hsu-master/pkg/master"
+    "github.com/core-tools/hsu-master/pkg/worker"
+    
+    // Import your modules as regular Go packages
+    "my-app/modules/data-processor"
+    "my-app/modules/auth-service"
+    "github.com/company/log-processor"  // External module from dependency
+)
+
+func main() {
+    // Create HSU Master
+    master := master.NewMaster(master.Config{
+        // master configuration
+    })
+    
+    // Register native modules (compiled into binary)
+    master.RegisterNativeModuleFactory("data-processor", dataprocessor.NewDataProcessor)
+    master.RegisterNativeModuleFactory("auth-service", authservice.NewAuthService)
+    master.RegisterNativeModuleFactory("log-processor", logprocessor.NewLogProcessor)
+    
+    // Configure workers from config file
+    config := loadWorkerConfig("workers.yaml")
+    for _, workerConfig := range config.Workers {
+        err := master.AddWorker(workerConfig)
+        if err != nil {
+            log.Fatal(err)
+        }
+    }
+    
+    // Start master
+    err := master.Start(context.Background())
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    // Keep running
+    select {}
+}
+```
+
+**Application Structure:**
+```
+my-application/
+├── main.go                    # Application entry point with HSU Master
+├── go.mod                     # Dependencies including hsu-master
+├── workers.yaml               # Worker configuration
+├── modules/                   # Local modules
+│   ├── data-processor/
+│   │   ├── module.go         # Implements WorkerModule interface
+│   │   ├── processor.go      # Business logic
+│   │   └── config.go         # Configuration handling
+│   └── auth-service/
+│       ├── module.go
+│       ├── auth.go
+│       └── handlers.go
+└── vendor/                    # External modules
+    └── github.com/company/log-processor/
+```
+
+### Approach B: Go Plugins (Advanced)
+
+**Modules loaded as .so files at runtime**
+
+```go
+// For advanced use cases requiring runtime loading
+func (master *Master) loadPluginModule(path string) error {
+    p, err := plugin.Open(path)
+    if err != nil {
+        return err
+    }
+    
+    factorySymbol, err := p.Lookup("NewModule")
+    if err != nil {
+        return err
+    }
+    
+    factory := factorySymbol.(func() worker.WorkerModule)
+    module := factory()
+    
+    return master.registerModule(module.GetInfo().Name, module)
+}
+```
+
+### Approach C: External Processes (Current)
+
+**Same as existing process workers - separate executables**
+
+## Enhanced Application Architecture
+
+```mermaid
+graph TD
+    A["Application Binary"] --> B["HSU Master"]
+    A --> C["Native Modules<br/>(Compiled In)"]
+    A --> D["External Dependencies"]
+    
+    B --> E["ModuleRegistry"]
+    B --> F["ProcessControl"]
+    B --> G["WorkerLifecycle"]
+    
+    C --> H["data-processor<br/>module"]
+    C --> I["auth-service<br/>module"] 
+    C --> J["log-processor<br/>module"]
+    
+    E --> K["Native Factory Map"]
+    E --> L["Plugin Loader"]
+    E --> M["Process Launcher"]
+    
+    K --> H
+    K --> I
+    K --> J
+    
+    style A fill:#e8f5e8
+    style C fill:#e1f5fe
+    style H fill:#f3e5f5
+    style I fill:#f3e5f5
+    style J fill:#f3e5f5
+```
+
 ## Interface Definitions
 
 ### 1. Core Worker Interface
@@ -175,7 +415,7 @@ type ProcessWorkerController struct {
 
 // Module Worker Controller (NEW - simplified)
 type ModuleWorkerController struct {
-    module     Module
+    module     worker.WorkerModule  // Uses same interface as module authors implement
     goroutine  *GoroutineManager
     state      WorkerState
     startTime  time.Time
@@ -224,8 +464,11 @@ type Master struct {
     packageManager packagemanager.WorkerPackageManager
     logger         logging.Logger
     
-    // NEW: Module runtime
-    moduleRuntime  ModuleRuntime
+    // NEW: Native module support
+    nativeModuleFactories map[string]ModuleFactory
+    pluginModuleLoader    PluginLoader
+    moduleInstances       map[string]worker.WorkerModule
+    moduleRuntime         ModuleRuntime
 }
 
 type WorkerEntry struct {
@@ -235,6 +478,32 @@ type WorkerEntry struct {
     Config      WorkerConfig
 }
 
+type ModuleFactory func() worker.WorkerModule
+
+type ModuleType string
+const (
+    ModuleTypeNative ModuleType = "native"  // Compiled into binary
+    ModuleTypePlugin ModuleType = "plugin"  // .so/.dll files
+)
+
+// Enhanced WorkerConfig
+type WorkerConfig struct {
+    ID     string
+    Type   WorkerType  // "process" or "module"
+    
+    // For process workers
+    Package        string
+    ExecutablePath string
+    
+    // For module workers
+    ModuleType ModuleType  // "native" or "plugin"
+    ModuleName string      // Factory name or plugin path
+    Config     map[string]interface{}
+}
+
+// Native module registration
+func (m *Master) RegisterNativeModuleFactory(name string, factory ModuleFactory)
+
 // Enhanced Master methods (unified interface)
 func (m *Master) AddWorker(config WorkerConfig) error
 func (m *Master) GetWorkerStateWithDiagnostics(id string) (WorkerStateWithDiagnostics, error)
@@ -243,6 +512,62 @@ func (m *Master) StartWorker(ctx context.Context, id string) error
 func (m *Master) StopWorker(ctx context.Context, id string) error
 
 // Same API regardless of worker type!
+
+// Enhanced AddWorker implementation
+func (m *Master) AddWorker(config WorkerConfig) error {
+    switch config.Type {
+    case WorkerTypeProcess:
+        return m.addProcessWorker(config)
+    case WorkerTypeModule:
+        return m.addModuleWorker(config)
+    default:
+        return fmt.Errorf("unsupported worker type: %s", config.Type)
+    }
+}
+
+func (m *Master) addModuleWorker(config WorkerConfig) error {
+    var module worker.WorkerModule
+    var err error
+    
+    switch config.ModuleType {
+    case ModuleTypeNative:
+        // Create from registered factory
+        factory, exists := m.nativeModuleFactories[config.ModuleName]
+        if !exists {
+            return fmt.Errorf("native module factory not found: %s", config.ModuleName)
+        }
+        module = factory()
+        
+    case ModuleTypePlugin:
+        // Load from plugin file
+        module, err = m.pluginModuleLoader.LoadModule(config.ModuleName)
+        if err != nil {
+            return err
+        }
+        
+    default:
+        return fmt.Errorf("unsupported module type: %s", config.ModuleType)
+    }
+    
+    // Initialize module
+    err = module.Initialize(context.Background(), config.Config)
+    if err != nil {
+        return err
+    }
+    
+    // Create controller
+    controller := NewModuleWorkerController(module)
+    
+    // Register worker
+    m.workers[config.ID] = WorkerEntry{
+        Worker:     module,
+        Type:       WorkerTypeModule,
+        Controller: controller,
+        Config:     config,
+    }
+    
+    return nil
+}
 ```
 
 ## Module Runtime (NEW Component)
@@ -252,28 +577,13 @@ func (m *Master) StopWorker(ctx context.Context, id string) error
 ```go
 // NEW: Module runtime for in-proc workers
 type ModuleRuntime interface {
-    LoadModule(path string, entryPoint string) (Module, error)
-    UnloadModule(module Module) error
-    ListLoadedModules() []ModuleInfo
+    LoadModule(path string, entryPoint string) (worker.WorkerModule, error)
+    UnloadModule(module worker.WorkerModule) error
+    ListLoadedModules() []worker.ModuleInfo
 }
 
-type Module interface {
-    // Module lifecycle (called by ModuleWorkerController)
-    Initialize(ctx context.Context, config map[string]interface{}) error
-    Start(ctx context.Context) error
-    Stop(ctx context.Context) error
-    IsHealthy() bool
-    
-    // Module metadata
-    GetMetadata() ModuleMetadata
-}
-
-type ModuleMetadata struct {
-    ID          string
-    Version     string
-    EntryPoint  string
-    LoadTime    time.Time
-}
+// Note: WorkerModule interface is defined in the worker package (see Module Development section)
+// Module authors implement worker.WorkerModule interface - same interface used throughout system
 ```
 
 ### Goroutine Management with Isolation
@@ -285,13 +595,13 @@ type GoroutineManager struct {
 }
 
 type ModuleExecution struct {
-    module    Module
+    module    worker.WorkerModule
     cancel    context.CancelFunc
     done      chan error
     started   time.Time
 }
 
-func (gm *GoroutineManager) StartModule(ctx context.Context, module Module) error {
+func (gm *GoroutineManager) StartModule(ctx context.Context, module worker.WorkerModule) error {
     moduleCtx, cancel := context.WithCancel(ctx)
     done := make(chan error, 1)
     
@@ -315,7 +625,7 @@ func (gm *GoroutineManager) StartModule(ctx context.Context, module Module) erro
             return err
         }
         
-        gm.modules[module.GetMetadata().ID] = &ModuleExecution{
+        gm.modules[module.GetInfo().Name] = &ModuleExecution{
             module:  module,
             cancel:  cancel,
             done:    done,
@@ -431,16 +741,34 @@ workers:
       executable_path: "/opt/workers/data-processor"
       args: ["--config", "config.yaml"]
     
-  # In-process deployment (NEW)
+  # Native module deployment (RECOMMENDED)
   - id: "data-processor-2"  
     type: "module"
-    package: "data-processor:1.2.3"  # Same package!
-    module:
-      module_path: "data-processor.so"
-      entry_point: "CreateDataProcessor"
-      config:
-        port: 8081
-        timeout: "30s"
+    module_type: "native"
+    module_name: "data-processor"  # References registered factory
+    config:
+      port: ":8080"
+      batch_size: 1000
+      timeout: "30s"
+      
+  # Another instance of same native module with different config
+  - id: "data-processor-3" 
+    type: "module"
+    module_type: "native"
+    module_name: "data-processor"  # Same module, different config
+    config:
+      port: ":8081"
+      batch_size: 500
+      mode: "development"
+      
+  # Plugin module deployment (advanced)
+  - id: "external-processor"
+    type: "module"
+    module_type: "plugin"
+    module_name: "/opt/plugins/external-processor.so"
+    config:
+      endpoint: "/api/process"
+      workers: 4
 ```
 
 ### Package Metadata
@@ -502,28 +830,65 @@ func (dp *DataProcessor) Start(ctx context.Context) error {
 ### 2. Runtime Management
 
 ```go
-// Same API for both types!
+// Application startup - register native modules
+master := master.NewMaster(master.Config{})
+master.RegisterNativeModuleFactory("data-processor", dataprocessor.NewDataProcessor)
+master.RegisterNativeModuleFactory("auth-service", authservice.NewAuthService)
+
+// Same API for all worker types!
 processConfig := WorkerConfig{
-    ID:   "data-processor-1",
-    Type: WorkerTypeProcess,
-    Package: "data-processor:1.2.3",
+    ID:           "data-processor-1",
+    Type:         WorkerTypeProcess,
+    Package:      "data-processor:1.2.3",
+    ExecutablePath: "/opt/workers/data-processor",
 }
 err := master.AddWorker(processConfig)
 
-moduleConfig := WorkerConfig{
-    ID:   "data-processor-2",
-    Type: WorkerTypeModule,
-    Package: "data-processor:1.2.3",  // Same package!
+nativeModuleConfig := WorkerConfig{
+    ID:         "data-processor-2",
+    Type:       WorkerTypeModule,
+    ModuleType: ModuleTypeNative,
+    ModuleName: "data-processor",  // References registered factory
+    Config: map[string]interface{}{
+        "port":       ":8080",
+        "batch_size": 1000,
+    },
 }
-err := master.AddWorker(moduleConfig)
+err := master.AddWorker(nativeModuleConfig)
 
-// Same monitoring
+// Same monitoring for all types
 state1 := master.GetWorkerStateWithDiagnostics("data-processor-1")  // Process worker
-state2 := master.GetWorkerStateWithDiagnostics("data-processor-2")  // Module worker
+state2 := master.GetWorkerStateWithDiagnostics("data-processor-2")  // Native module worker
 
 // Same lifecycle operations
 err = master.StartWorker(ctx, "data-processor-1")
 err = master.StartWorker(ctx, "data-processor-2")  // Same API!
+
+// Multiple instances of same module with different configs
+authConfig1 := WorkerConfig{
+    ID:         "auth-service-public",
+    Type:       WorkerTypeModule,
+    ModuleType: ModuleTypeNative,
+    ModuleName: "auth-service",
+    Config: map[string]interface{}{
+        "port":     ":9090",
+        "audience": "public-api",
+    },
+}
+
+authConfig2 := WorkerConfig{
+    ID:         "auth-service-internal",
+    Type:       WorkerTypeModule,
+    ModuleType: ModuleTypeNative,
+    ModuleName: "auth-service",  // Same module type
+    Config: map[string]interface{}{
+        "port":     ":9091",
+        "audience": "internal-api",
+    },
+}
+
+err = master.AddWorker(authConfig1)
+err = master.AddWorker(authConfig2)
 ```
 
 ### 3. Package Management
@@ -539,6 +904,103 @@ err := master.InstallWorkerPackage(ctx, InstallRequest{
     WorkerType: "data-processor", 
     TargetType: WorkerTypeModule,   // Install as module
 })
+```
+
+## Developer Experience Summary
+
+### For Module Authors (Using Native Go Modules)
+
+1. **Simple Interface Implementation**
+   - Implement `WorkerModule` interface (4 simple methods)
+   - Write regular Go code - no special build requirements
+   - Same development patterns as any Go service
+
+2. **Location-Transparent Development**
+   ```go
+   // Write once, deploy anywhere
+   type MyService struct {
+       server *grpc.Server
+   }
+   
+   // Same gRPC server code works for both:
+   // - In-process module (fast, shared memory)
+   // - Out-of-process worker (isolated, fault-tolerant)
+   ```
+
+3. **Factory Function Pattern**
+   ```go
+   // Simple factory function
+   func NewMyService() worker.WorkerModule {
+       return &MyService{}
+   }
+   ```
+
+### For Application Authors
+
+1. **Import Modules as Go Packages**
+   ```go
+   import "my-app/modules/data-processor"
+   import "github.com/company/auth-service"
+   ```
+
+2. **Register at Startup**
+   ```go
+   master.RegisterNativeModuleFactory("data-processor", dataprocessor.NewDataProcessor)
+   ```
+
+3. **Configure via YAML**
+   ```yaml
+   workers:
+     - id: "service-1"
+       type: "module"
+       module_type: "native"
+       module_name: "data-processor"
+   ```
+
+4. **Same APIs for All Worker Types**
+   ```go
+   // Same methods work for process and module workers
+   master.StartWorker(ctx, "service-1")
+   master.GetWorkerStateWithDiagnostics("service-1")
+   ```
+
+### Benefits of Native Modules
+
+#### ✅ **Development Benefits**
+- **Zero Runtime Dependencies**: No plugin loading complexity
+- **Fast Startup**: No dynamic loading overhead  
+- **Type Safety**: Compile-time checking across module boundaries
+- **Debugging Friendly**: Same binary, same debugger, unified stack traces
+- **Cross-Platform**: No .so/.dll complications
+
+#### ✅ **Operational Benefits**
+- **Single Binary Deployment**: Everything in one executable
+- **Unified Monitoring**: Same metrics and logging for all workers
+- **Configuration Consistency**: Same YAML structure for all worker types
+- **Resource Efficiency**: Shared memory, no IPC overhead
+
+#### ✅ **Architectural Benefits**
+- **Go-Idiomatic**: Just import packages - familiar to Go developers
+- **Version Management**: Same Go module versioning for all dependencies
+- **Build Simplicity**: Standard `go build` - no special tooling required
+- **Dependency Management**: Standard `go.mod` handles everything
+
+### Migration Path
+
+1. **Start Simple**: Begin with native modules for new services
+2. **Gradual Migration**: Convert existing services one at a time
+3. **Flexible Deployment**: Switch between process/module via configuration
+4. **Risk Mitigation**: Critical services can remain as separate processes
+
+```go
+// Easy migration - same service code
+type MyService struct { /* same implementation */ }
+
+// Phase 1: Deploy as process worker
+config := WorkerConfig{Type: WorkerTypeProcess, Package: "my-service:1.0.0"}
+
+// Phase 2: Switch to native module  
+config := WorkerConfig{Type: WorkerTypeModule, ModuleType: ModuleTypeNative, ModuleName: "my-service"}
 ```
 
 ## Constraints and Limitations
@@ -695,13 +1157,59 @@ err := master.InstallWorkerPackage(ctx, InstallRequest{
 
 ## Conclusion
 
-The Unified Worker Architecture provides a powerful foundation for location-transparent services while maintaining simplicity and avoiding over-engineering. By treating in-process modules as a specialized type of worker with the same lifecycle and management interfaces as traditional process workers, we achieve:
+The Unified Worker Architecture provides a powerful foundation for location-transparent services while maintaining simplicity and leveraging Go's strengths. The **native module approach** is the key innovation that makes this architecture practical and compelling:
 
-- **Operational Consistency**: Same tools, APIs, and processes for all worker types
-- **Development Flexibility**: Services designed once, deployed anywhere
-- **Incremental Adoption**: Easy migration path from existing architecture
-- **Future Readiness**: Foundation for advanced deployment strategies
+### Key Achievements
 
-The key insight is that **deployment location should be a configuration decision, not a design constraint**. This architecture makes that vision achievable while respecting practical limitations and maintaining system stability.
+- **True Location Transparency**: Same service code works in-process or out-of-process
+- **Go-Idiomatic Development**: Just import packages and register factories
+- **Operational Consistency**: Same Master APIs, monitoring, and lifecycle management
+- **Zero Complexity Overhead**: No dynamic loading, plugins, or special build requirements
+- **Development Velocity**: Familiar Go patterns with enhanced deployment flexibility
 
-The constraints and limitations are reasonable trade-offs that enable a much simpler implementation while delivering substantial value to developers and operators. The evolutionary approach ensures that existing functionality remains stable while new capabilities are added incrementally.
+### Core Insight
+
+**Deployment location should be a configuration decision, not a design constraint.**
+
+The native module approach achieves this by:
+1. **Compile-time Integration**: Modules are regular Go packages compiled into the binary
+2. **Runtime Registration**: Simple factory pattern connects modules to Master
+3. **Configuration-Driven**: YAML determines whether services run in-process or out-of-process
+4. **Unified Management**: Same lifecycle, monitoring, and error handling for all worker types
+
+### Why Native Modules Are Superior
+
+Unlike traditional plugin architectures that require:
+- ❌ Complex dynamic loading mechanisms
+- ❌ Cross-platform binary compatibility 
+- ❌ Runtime dependency management
+- ❌ Separate build pipelines
+
+Native modules provide:
+- ✅ **Compile-time Safety**: All dependencies resolved at build time
+- ✅ **Single Binary**: Everything packaged together
+- ✅ **Standard Tooling**: Regular `go build` and `go mod` workflow
+- ✅ **Unified Debugging**: Same binary, same debugger, complete stack traces
+- ✅ **Resource Efficiency**: Shared memory, no IPC overhead
+
+### Strategic Value
+
+This architecture enables organizations to:
+
+1. **Start Simple**: Begin with in-process modules for rapid development
+2. **Scale Incrementally**: Move critical services to separate processes as needed
+3. **Maintain Flexibility**: Switch deployment models via configuration
+4. **Reduce Complexity**: Eliminate the need for multiple service architectures
+5. **Leverage Go Ecosystem**: Use standard Go development practices throughout
+
+### Implementation Reality
+
+The constraints and limitations are reasonable trade-offs that enable a much simpler implementation while delivering substantial value:
+
+- **Shared fate for modules**: Acceptable for most use cases, documented clearly
+- **No hot-swapping**: Simplifies implementation significantly
+- **No resource limits for modules**: Consistent with unmanaged worker pattern
+
+The evolutionary approach ensures existing functionality remains stable while new capabilities are added incrementally, making this a low-risk, high-value enhancement to the HSU Master system.
+
+**This architecture transforms HSU Master from a process manager into a unified service orchestrator that can elegantly handle both traditional process workers and modern in-process modules with the same simplicity and power.**
